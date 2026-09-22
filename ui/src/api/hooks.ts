@@ -344,14 +344,6 @@ export function useRemuxBackfill() {
   });
 }
 
-// One-shot backfill: writes the permanent Recording/Audio agenda links for
-// every already-archived upload. Purely additive (merges by label), so
-// nothing here can touch the YouTube/MixCloud links already on a record.
-export function useArchiveLinksBackfill() {
-  const trpc = useTRPC();
-  return useMutation(trpc.uploads.archiveLinksBackfill.mutationOptions());
-}
-
 // Cover image lives in the PocketBase record; changing it invalidates shows so
 // every view (form, archive) reflects the new master cover.
 export function useUploadCover(showId: string | undefined) {

@@ -153,8 +153,6 @@ function resolve(proc: string, input: unknown): unknown {
       return { ok: true };
     case 'uploads.remuxBackfill':
       return { enqueued: 1 };
-    case 'uploads.archiveLinksBackfill':
-      return { updated: 2, total: 2 };
     case 'uploads.generateAudio':
       return { ok: true };
     case 'uploads.compressArchiveVideo':
