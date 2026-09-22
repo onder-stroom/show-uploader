@@ -20,18 +20,26 @@ pnpm workspace, Node 20, TypeScript everywhere.
 
 ## Architecture
 
-Two styles, one per package. Match the one you're in:
+Ports and adapters in both the worker and the api. Infrastructure sits behind
+interfaces, the real ones are built once, and tests use in-memory fakes:
 
-- **worker: ports and adapters.** Jobs (`worker/src/jobs/`) take a `deps` argument
-  typed by the interfaces in `worker/src/ports.ts` (S3, Postgres, the queue, the
-  PocketBase write-back, YouTube, MixCloud). `worker/src/adapters.ts` builds the
-  real ones and `worker/src/index.ts` passes them in. A job never imports `db`,
-  `queue`, `s3`, `shows-api` or a platform client. Tests use `test/fakes.ts`
-  (`fakeDeps()`: an in-memory bucket, a job-status log, `vi.fn` everywhere). ffmpeg
-  and the scratch workspace are local tools, not ports; jobs import them and tests
-  `vi.mock` them. A new external system gets a port and an adapter first.
-- **api: service layer.** Routers call use cases, which import concrete modules
-  directly; tests swap those modules with `vi.mock`.
+| | worker | api |
+|---|---|---|
+| Rules | `worker/src/jobs/` | `api/src/usecases/` |
+| Ports (interfaces) | `worker/src/ports.ts` | `api/src/ports.ts` |
+| Real adapters | `worker/src/adapters.ts` | `api/src/adapters.ts` |
+| Built once in | `worker/src/index.ts` | `api/src/deps.ts` |
+| Test fakes | `worker/test/fakes.ts` | `api/test/fakes.ts` |
+
+- Jobs and use cases take a `deps` argument and never import `db`, the queue,
+  `s3`, `shows-api`, a platform client or `env`. They may import pure code:
+  `@show-uploader/domain`, `services/video-preview`, ffmpeg and the workspace (the
+  last two are local tools, not ports; the worker's tests `vi.mock` them).
+- Routers and REST routes are the driving side: they validate input, call a use
+  case with `deps` and map its `UseCaseError`. Plain reads may still call a
+  service directly.
+- A new outside system gets a port and an adapter first. A pure rule both sides
+  need goes in `packages/domain`.
 
 **Publish pipeline.** The UI creates an upload bound to its show. The worker's
 **archive job always runs first** (`worker/src/jobs/archive.ts`): one download, trim,
@@ -53,7 +61,6 @@ Read `docs/architecture/video-lifecycle.md` before touching upload/video state.
 | S3 access / signing | `api/src/services/s3.ts`, `worker/src/services/s3.ts`; UI signs through the `storage.signObject` query |
 | ffmpeg / ffprobe | `worker/src/services/ffmpeg.ts` (trim, remux, loudness, `probeDuration`) |
 | Per-job scratch dirs | `worker/src/services/workspace.ts` |
-| Worker infrastructure | Interfaces in `worker/src/ports.ts`, real ones in `worker/src/adapters.ts`, fakes in `worker/test/fakes.ts` |
 | Queues | `api/src/queue/index.ts` (producers), `worker/src/index.ts` (consumers, concurrency 1 on purpose) |
 | UI data hooks | `ui/src/api/hooks.ts` (tRPC + React Query) |
 | UI video/show status | `ui/src/upload/resolveVideo.ts`, `resolveShowStatus.ts`, the single derivation rules |
@@ -62,10 +69,9 @@ Read `docs/architecture/video-lifecycle.md` before touching upload/video state.
 | Styling | `ui/src/theme.ts` tokens and component defaults, never per-call-site styles |
 
 **Routers stay thin.** A procedure that does more than one call plus error handling
-gets its logic moved into a `usecases/` function. Use cases import `db`, the queue
-and services directly (same as the rest of the codebase, so `vi.mock` tests work)
-and throw `UseCaseError('NOT_FOUND' | 'CONFLICT' | 'PRECONDITION_FAILED', message)`
-for a refused rule, never a `TRPCError`. See `api/test/usecases/` for the test style.
+gets its logic moved into a `usecases/` function, which throws
+`UseCaseError('NOT_FOUND' | 'CONFLICT' | 'PRECONDITION_FAILED', message)` for a
+refused rule, never a `TRPCError`. See `api/test/usecases/` for the test style.
 
 **Reuse before you write.** Before adding a helper, hook, query, component or job,
 search for an existing one (`grep` the concern, check the table above) and extend it.

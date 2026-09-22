@@ -1,6 +1,6 @@
 import { env } from '../env';
 import type { ArchiveRecord } from '../pocketbase-types';
-import { platformTitle } from '@show-uploader/domain';
+import { platformOfLabel, platformTitle } from '@show-uploader/domain';
 import { syncYoutubeMetadata, syncMixcloudMetadata } from './platform-metadata';
 
 // Server-side calls prefer the internal host (no NAT hairpin on a single box).
@@ -247,19 +247,6 @@ export async function listArchiveStates(): Promise<Record<string, ArchiveState>>
 // One entry in the archive record's `mediaLinks` JSON array, matching the shape
 // the agenda site already stores/renders, e.g. { label:'YouTube', type:'video', url }.
 export type MediaLink = { label: string; type: string; url: string };
-
-/**
- * Which platform a media link's label refers to, or null for anything else.
- *
- * Case-insensitive because these labels are hand-typed in the agenda admin and
- * production genuinely holds "Youtube" and "Mixcloud" beside "YouTube" and
- * "MixCloud". Matching exactly meant a show that WAS on YouTube looked
- * unpublished, which is how a duplicate upload gets created.
- */
-export function platformOfLabel(label: string): 'youtube' | 'mixcloud' | null {
-  const n = label.trim().toLowerCase();
-  return n === 'youtube' ? 'youtube' : n === 'mixcloud' ? 'mixcloud' : null;
-}
 
 export type ArchivePatch = {
   title?: string;

@@ -34,16 +34,6 @@ export async function cancelQueuedJobs(uploadId: string): Promise<{ removed: num
 }
 
 /**
- * Whether an upload's platform work has finished. The archive job rewrites the
- * source video on S3, so it must never run while YouTube or MixCloud still
- * needs the original file. Mirrors the worker's own auto-enqueue condition.
- */
-export function readyToArchive(jobs: PlatformJob[]): boolean {
-  const platform = jobs.filter((j) => j.platform !== 'archive');
-  return platform.length > 0 && platform.every((j) => j.status === 'done');
-}
-
-/**
  * Queue the 'archive' job for an upload — it extracts the downloadable m4a and
  * remuxes the recording to MP4. Reuses the upload's existing archive job row
  * (resetting it) so re-running never piles up duplicate rows.

@@ -15,6 +15,7 @@ vi.mock('../../src/usecases/publish', () => ({ retryJob: vi.fn(), publishUpload:
 vi.mock('../../src/usecases/archive', () => ({}));
 vi.mock('../../src/usecases/metadata', () => ({}));
 vi.mock('../../src/usecases/recordings', () => ({}));
+vi.mock('../../src/deps', () => ({ deps: {} }));
 
 import { TRPCError } from '@trpc/server';
 import { uploadsRouter } from '../../src/trpc/routers/uploads';

@@ -1,32 +1,7 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
-
-vi.mock('../../src/env', () => ({ env: { JINGLE_S3_KEY: 'jingles/intro.m4a' } }));
-vi.mock('../../src/db/client', () => ({ db: {} }));
-vi.mock('../../src/db/queries', () => ({
-  createUpload: vi.fn(),
-  createPlatformJob: vi.fn(),
-  deleteStagedUpload: vi.fn(async () => {}),
-  getUploadWithJobs: vi.fn(),
-  releaseClaimForShow: vi.fn(async () => {}),
-  resetPlatformJobForRetry: vi.fn(async () => {}),
-}));
-vi.mock('../../src/queue', () => ({ uploadQueue: { add: vi.fn() } }));
-vi.mock('../../src/services/archive-jobs', () => ({ enqueueArchiveJob: vi.fn(async () => true) }));
-vi.mock('../../src/services/live-guard', () => ({ getLiveState: vi.fn(async () => ({ isLive: false })) }));
-vi.mock('../../src/services/presence-hub', () => ({ presenceHub: { broadcastClaims: vi.fn() } }));
-vi.mock('../../src/services/shows-api', () => ({
-  getArchiveShow: vi.fn(),
-  platformOfLabel: (label: string) => (label === 'YouTube' ? 'youtube' : label === 'MixCloud' ? 'mixcloud' : null),
-}));
-vi.mock('../../src/usecases/archive', () => ({ adoptArchivedUpload: vi.fn() }));
-
-import { createUpload, getUploadWithJobs, resetPlatformJobForRetry } from '../../src/db/queries';
-import { uploadQueue } from '../../src/queue';
-import { enqueueArchiveJob } from '../../src/services/archive-jobs';
-import { getArchiveShow } from '../../src/services/shows-api';
-import { adoptArchivedUpload } from '../../src/usecases/archive';
+import { describe, it, expect } from 'vitest';
 import { UseCaseError } from '../../src/usecases/errors';
 import { publishToPlatform, publishUpload, retryJob } from '../../src/usecases/publish';
+import { fakeDeps, uploadRow } from '../fakes';
 
 const input = {
   showId: 'show-1',
@@ -40,19 +15,6 @@ const input = {
   autoTrimSilence: true,
 };
 
-const upload = (jobs: { platform: string; status: string }[]) => ({
-  id: 'up-1',
-  show_id: 'show-1',
-  title: 'Palmbomen II',
-  description: null,
-  tags: null,
-  image_url: null,
-  video_s3_key: 'shows/2026-08-08-palmbomen-ii/video.mp4',
-  audio_s3_key: 'shows/2026-08-08-palmbomen-ii/audio.m4a',
-  jingle_s3_key: null,
-  jobs: jobs.map((j, i) => ({ id: `job-${i}`, result_url: null, ...j })),
-});
-
 async function refusal(p: Promise<unknown>): Promise<UseCaseError> {
   const err = await p.then(
     () => null,
@@ -63,157 +25,167 @@ async function refusal(p: Promise<unknown>): Promise<UseCaseError> {
 }
 
 describe('publishUpload', () => {
-  beforeEach(() => vi.clearAllMocks());
-
   // Publishing twice makes a second video/cloudcast someone has to take down by
   // hand, so the record's links win over whatever the form thought.
   it('refuses a platform the agenda record already links to', async () => {
-    vi.mocked(getArchiveShow).mockResolvedValue({
-      mediaLinks: [{ label: 'YouTube', type: 'video', url: 'https://youtu.be/x' }],
-    } as never);
+    const deps = fakeDeps({
+      shows: [{ id: 'show-1', mediaLinks: [{ label: 'Youtube', type: 'video', url: 'https://youtu.be/x' }] }],
+    });
 
-    const err = await refusal(publishUpload(input));
+    const err = await refusal(publishUpload(input, deps));
 
     expect(err.code).toBe('CONFLICT');
     expect(err.message).toContain('youtube');
-    expect(vi.mocked(createUpload)).not.toHaveBeenCalled();
+    expect(deps.uploads.create).not.toHaveBeenCalled();
+  });
+
+  it('creates every job row but enqueues only the archive; it starts the platforms itself', async () => {
+    const deps = fakeDeps({ shows: [{ id: 'show-1', mediaLinks: [] }], jingleS3Key: 'jingles/intro.m4a' });
+
+    const result = await publishUpload(input, deps);
+
+    expect(result.deferredUntil).toBeNull();
+    expect(result.jobs.map((j) => j.platform)).toEqual(['youtube', 'mixcloud']);
+    expect(deps.queued.map((q) => q.kind)).toEqual(['archive']);
+    expect(deps.rows.get(result.uploadId)).toMatchObject({ jingle_s3_key: 'jingles/intro.m4a' });
+    expect(deps.uploads.releaseClaim).toHaveBeenCalledWith('show-1');
+    expect(deps.presence.broadcastClaims).toHaveBeenCalled();
   });
 
   it('passes the silence checkbox through to the archive job', async () => {
-    vi.mocked(getArchiveShow).mockResolvedValue({ mediaLinks: [] } as never);
-    vi.mocked(createUpload).mockResolvedValue({ id: 'up-1' } as never);
+    const deps = fakeDeps({ shows: [{ id: 'show-1', mediaLinks: [] }] });
 
-    await publishUpload({ ...input, autoTrimSilence: false });
+    await publishUpload({ ...input, autoTrimSilence: false }, deps);
 
-    expect(vi.mocked(enqueueArchiveJob)).toHaveBeenCalledWith({}, expect.anything(), {
-      delay: 0,
-      includeJingle: true,
-      autoTrimSilence: false,
-    });
+    expect(deps.queued[0].payload).toMatchObject({ delay: 0, includeJingle: true, autoTrimSilence: false });
   });
 
-  it('enqueues only the archive job; it starts the platforms itself', async () => {
-    vi.mocked(getArchiveShow).mockResolvedValue({ mediaLinks: [] } as never);
-    vi.mocked(createUpload).mockResolvedValue({ id: 'up-1' } as never);
+  // Heavy work would starve the live stream of CPU and bandwidth.
+  it('defers the archive while a show is on air', async () => {
+    const resumeAt = new Date(Date.now() + 60 * 60 * 1000);
+    const deps = fakeDeps({ shows: [{ id: 'show-1', mediaLinks: [] }], live: { isLive: true, resumeAt } });
 
-    const result = await publishUpload(input);
+    const result = await publishUpload(input, deps);
 
-    expect(result).toMatchObject({ uploadId: 'up-1', deferredUntil: null });
-    expect(vi.mocked(enqueueArchiveJob)).toHaveBeenCalledOnce();
-    expect(vi.mocked(uploadQueue.add)).not.toHaveBeenCalled();
+    expect(result.deferredUntil).toBe(resumeAt.toISOString());
+    expect((deps.queued[0].payload as { delay: number }).delay).toBeGreaterThan(0);
   });
 });
 
 describe('retryJob', () => {
-  beforeEach(() => vi.clearAllMocks());
-
   it('refuses a platform retry before the archive has finished', async () => {
-    vi.mocked(getUploadWithJobs).mockResolvedValue(
-      upload([
-        { platform: 'archive', status: 'failed' },
-        { platform: 'youtube', status: 'failed' },
-      ]) as never
-    );
+    const deps = fakeDeps({
+      uploads: [uploadRow({}, [{ platform: 'archive', status: 'failed' }, { platform: 'youtube', status: 'failed' }])],
+    });
 
-    const err = await refusal(retryJob('up-1', 'youtube'));
-
-    expect(err.code).toBe('PRECONDITION_FAILED');
-    expect(vi.mocked(uploadQueue.add)).not.toHaveBeenCalled();
+    expect((await refusal(retryJob('up-1', 'youtube', deps))).code).toBe('PRECONDITION_FAILED');
+    expect(deps.queued).toEqual([]);
   });
 
   it('refuses a job that is still running', async () => {
-    vi.mocked(getUploadWithJobs).mockResolvedValue(upload([{ platform: 'archive', status: 'processing' }]) as never);
-    expect((await refusal(retryJob('up-1', 'archive'))).code).toBe('CONFLICT');
+    const deps = fakeDeps({ uploads: [uploadRow({}, [{ platform: 'archive', status: 'processing' }])] });
+    expect((await refusal(retryJob('up-1', 'archive', deps))).code).toBe('CONFLICT');
   });
 
   it('re-enqueues a platform on the archived artefacts, untrimmed', async () => {
-    vi.mocked(getUploadWithJobs).mockResolvedValue(
-      upload([
-        { platform: 'archive', status: 'done' },
-        { platform: 'youtube', status: 'failed' },
-      ]) as never
-    );
+    const deps = fakeDeps({
+      uploads: [uploadRow({}, [{ platform: 'archive', status: 'done' }, { platform: 'youtube', status: 'failed' }])],
+    });
 
-    await retryJob('up-1', 'youtube');
+    await retryJob('up-1', 'youtube', deps);
 
-    expect(vi.mocked(resetPlatformJobForRetry)).toHaveBeenCalledWith({}, 'job-1');
-    expect(vi.mocked(uploadQueue.add)).toHaveBeenCalledWith(
-      'youtube',
-      expect.objectContaining({
-        videoS3Key: 'shows/2026-08-08-palmbomen-ii/video.mp4',
-        trimStart: null,
-        trimEnd: null,
-      })
-    );
+    expect(deps.rows.get('up-1')!.jobs[1].status).toBe('queued');
+    expect(deps.queued[0]).toMatchObject({
+      kind: 'youtube',
+      payload: { videoS3Key: 'shows/2026-08-08-palmbomen-ii/video.mp4', trimStart: null, trimEnd: null },
+    });
   });
 });
 
 describe('retryJob for the archive', () => {
-  beforeEach(() => vi.clearAllMocks());
-
   // A first archive that failed before finishing still points at the untrimmed
   // source; the retry has to apply the operator's trim, not skip it.
   it('re-runs an unfinished archive with the stored trim and silence detection', async () => {
-    vi.mocked(getUploadWithJobs).mockResolvedValue({
-      ...upload([{ platform: 'archive', status: 'failed' }]),
-      video_s3_key: 'incoming/1785-rec.mkv',
-      trim_start: '00:05:00',
-      trim_end: '02:00:00',
-      jingle_s3_key: 'jingles/intro.m4a',
-    } as never);
+    const deps = fakeDeps({
+      uploads: [
+        uploadRow(
+          { video_s3_key: 'incoming/1785-rec.mkv', trim_start: '00:05:00', trim_end: '02:00:00', jingle_s3_key: 'jingles/intro.m4a' },
+          [{ platform: 'archive', status: 'failed' }]
+        ),
+      ],
+    });
 
-    await retryJob('up-1', 'archive');
+    await retryJob('up-1', 'archive', deps);
 
-    expect(vi.mocked(enqueueArchiveJob)).toHaveBeenCalledWith(
-      {},
+    expect(deps.queue.enqueueArchive).toHaveBeenCalledWith(
       expect.objectContaining({ trim_start: '00:05:00', trim_end: '02:00:00' }),
       { includeJingle: true, autoTrimSilence: true }
     );
-    expect(vi.mocked(uploadQueue.add)).not.toHaveBeenCalled();
+    expect(deps.queue.enqueuePlatform).not.toHaveBeenCalled();
   });
 
   it('does not cut an already archived recording again', async () => {
-    vi.mocked(getUploadWithJobs).mockResolvedValue(upload([{ platform: 'archive', status: 'done' }]) as never);
+    const deps = fakeDeps({ uploads: [uploadRow({}, [{ platform: 'archive', status: 'done' }])] });
 
-    await retryJob('up-1', 'archive');
+    await retryJob('up-1', 'archive', deps);
 
-    expect(vi.mocked(enqueueArchiveJob)).toHaveBeenCalledWith({}, expect.anything(), {
+    expect(deps.queue.enqueueArchive).toHaveBeenCalledWith(expect.anything(), {
       includeJingle: false,
       autoTrimSilence: false,
     });
   });
 
   it('reports a conflict when the archive is already queued to run', async () => {
-    vi.mocked(getUploadWithJobs).mockResolvedValue(upload([{ platform: 'archive', status: 'failed' }]) as never);
-    vi.mocked(enqueueArchiveJob).mockResolvedValueOnce(false);
+    const deps = fakeDeps({ uploads: [uploadRow({}, [{ platform: 'archive', status: 'failed' }])] });
+    deps.queue.enqueueArchive.mockResolvedValueOnce(false);
 
-    expect((await refusal(retryJob('up-1', 'archive'))).code).toBe('CONFLICT');
+    expect((await refusal(retryJob('up-1', 'archive', deps))).code).toBe('CONFLICT');
   });
 });
 
 describe('publishToPlatform', () => {
-  beforeEach(() => vi.clearAllMocks());
+  const show = { id: 'show-1', mediaLinks: [], date: '2026-08-08', imageUrl: null, title: 'Palmbomen II' };
 
   it('refuses mixcloud when the show has no archived audio', async () => {
-    vi.mocked(getArchiveShow).mockResolvedValue({ mediaLinks: [], date: '2026-08-08' } as never);
-    vi.mocked(adoptArchivedUpload).mockResolvedValue({ ...upload([]), audio_s3_key: null } as never);
+    const deps = fakeDeps({ shows: [show], uploads: [uploadRow({ audio_s3_key: null })] });
 
-    expect((await refusal(publishToPlatform('show-1', 'mixcloud'))).code).toBe('PRECONDITION_FAILED');
+    expect((await refusal(publishToPlatform('show-1', 'mixcloud', deps))).code).toBe('PRECONDITION_FAILED');
   });
 
-  it('adds the platform title suffix and the configured jingle', async () => {
-    vi.mocked(getArchiveShow).mockResolvedValue({ mediaLinks: [], date: '2026-08-08', imageUrl: null } as never);
-    vi.mocked(adoptArchivedUpload).mockResolvedValue(upload([{ platform: 'mixcloud', status: 'done' }]) as never);
+  it('adds the platform title suffix and the configured jingle, reusing the old job row', async () => {
+    const deps = fakeDeps({
+      shows: [show],
+      uploads: [uploadRow({}, [{ id: 'old-mc', platform: 'mixcloud', status: 'done' }])],
+      jingleS3Key: 'jingles/intro.m4a',
+    });
 
-    await publishToPlatform('show-1', 'mixcloud');
+    const { jobId } = await publishToPlatform('show-1', 'mixcloud', deps);
 
-    expect(vi.mocked(uploadQueue.add)).toHaveBeenCalledWith(
-      'mixcloud',
+    expect(jobId).toBe('old-mc');
+    expect(deps.uploads.createJob).not.toHaveBeenCalled();
+    expect(deps.queued[0].payload).toMatchObject({
+      title: 'Palmbomen II 08.08.2026 @ coming soon',
+      jingleS3Key: 'jingles/intro.m4a',
+      includeJingle: true,
+    });
+  });
+
+  // An archived show whose upload row was deleted gets one rebuilt from S3.
+  it('adopts an archived show that has no upload row', async () => {
+    const deps = fakeDeps({
+      shows: [{ ...show, description: '', tags: [] }],
+      folders: { 'show-1': 'shows/2026-08-08-palmbomen-ii/' },
+      objects: ['shows/2026-08-08-palmbomen-ii/video.mp4', 'shows/2026-08-08-palmbomen-ii/audio.m4a'],
+    });
+
+    await publishToPlatform('show-1', 'youtube', deps);
+
+    expect(deps.uploads.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: 'Palmbomen II 08.08.2026 @ coming soon',
-        jingleS3Key: 'jingles/intro.m4a',
-        includeJingle: true,
+        video_s3_key: 'shows/2026-08-08-palmbomen-ii/video.mp4',
+        audio_s3_key: 'shows/2026-08-08-palmbomen-ii/audio.m4a',
       })
     );
+    expect(deps.queued.map((q) => q.kind)).toEqual(['youtube']);
   });
 });

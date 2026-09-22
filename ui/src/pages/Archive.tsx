@@ -806,7 +806,7 @@ function ArchiveCard({
 }
 
 // Which uploads the backfill will actually pick up. Mirrors the server rule in
-// api/src/services/archive-jobs.ts (readyToArchive) so the button's count never
+// packages/domain/src/jobs.ts (readyToArchive) so the button's count never
 // promises more than the mutation converts: the archive job replaces the source
 // video on S3, so it only runs once every platform job is done with it.
 function needsMp4Remux(u: UploadWithJobs): boolean {

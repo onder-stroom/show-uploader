@@ -15,6 +15,7 @@ import { deleteStagedVideo } from '../../services/staged-video';
 import { withDownloadUrls } from '../../services/upload-urls';
 import { updateArchiveRecord } from '../../services/shows-api';
 import { env } from '../../env';
+import { deps } from '../../deps';
 import { UseCaseError } from '../../usecases/errors';
 import { publishUpload, publishToPlatform, retryJob } from '../../usecases/publish';
 import { compressArchivedVideo, generateAudio, remuxBackfill } from '../../usecases/archive';
@@ -119,7 +120,7 @@ export const uploadsRouter = router({
 
   getUploadingProgress: protectedProcedure.query(async () => {
     try {
-      return await uploadingProgress();
+      return await uploadingProgress(deps);
     } catch (err) {
       internal(err, 'Failed to read upload progress:', 'Failed to read upload progress');
     }
@@ -141,7 +142,7 @@ export const uploadsRouter = router({
 
   create: protectedProcedure.input(CreateUploadSchema).mutation(async ({ input }) => {
     try {
-      return await publishUpload(input);
+      return await publishUpload(input, deps);
     } catch (err) {
       internal(err, 'Failed to create upload:', 'Failed to create upload');
     }
@@ -151,7 +152,7 @@ export const uploadsRouter = router({
     .input(z.object({ uploadId: z.string(), platform: z.enum(['youtube', 'mixcloud', 'archive']) }))
     .mutation(async ({ input }) => {
       try {
-        await retryJob(input.uploadId, input.platform);
+        await retryJob(input.uploadId, input.platform, deps);
         return { ok: true };
       } catch (err) {
         internal(err, 'Failed to retry job:', 'Failed to retry job');
@@ -160,7 +161,7 @@ export const uploadsRouter = router({
 
   generateAudio: protectedProcedure.input(z.object({ uploadId: z.string() })).mutation(async ({ input }) => {
     try {
-      await generateAudio(input.uploadId);
+      await generateAudio(input.uploadId, deps);
       return { ok: true };
     } catch (err) {
       internal(err, 'Failed to enqueue audio archive:', 'Failed to generate audio');
@@ -171,7 +172,7 @@ export const uploadsRouter = router({
     .input(z.object({ showId: z.string().min(1), platform: z.enum(['youtube', 'mixcloud']) }))
     .mutation(async ({ input }) => {
       try {
-        const { jobId } = await publishToPlatform(input.showId, input.platform);
+        const { jobId } = await publishToPlatform(input.showId, input.platform, deps);
         return { ok: true, jobId };
       } catch (err) {
         internal(err, 'Failed to enqueue platform publish:', 'Failed to start the platform upload');
@@ -182,7 +183,7 @@ export const uploadsRouter = router({
     .input(z.object({ showId: z.string().min(1) }))
     .mutation(async ({ input }) => {
       try {
-        await compressArchivedVideo(input.showId);
+        await compressArchivedVideo(input.showId, deps);
         return { ok: true };
       } catch (err) {
         internal(err, 'Failed to enqueue compress job:', 'Failed to start shrink');
@@ -191,7 +192,7 @@ export const uploadsRouter = router({
 
   remuxBackfill: protectedProcedure.mutation(async () => {
     try {
-      return await remuxBackfill();
+      return await remuxBackfill(deps);
     } catch (err) {
       internal(err, 'Failed to enqueue remux backfill:', 'Failed to start remux');
     }
@@ -215,7 +216,7 @@ export const uploadsRouter = router({
     .input(z.object({ videoS3Key: z.string().min(1) }))
     .mutation(async ({ input }) => {
       try {
-        return await startPreview(input.videoS3Key);
+        return await startPreview(input.videoS3Key, deps);
       } catch (err) {
         internal(err, 'Failed to start preview:', 'Failed to start preview');
       }
@@ -225,7 +226,7 @@ export const uploadsRouter = router({
     .input(z.object({ videoS3Key: z.string().min(1) }))
     .query(async ({ input }) => {
       try {
-        return await previewStatus(input.videoS3Key);
+        return await previewStatus(input.videoS3Key, deps);
       } catch (err) {
         internal(err, 'Failed to read preview status:', 'Failed to read preview status');
       }
@@ -233,7 +234,7 @@ export const uploadsRouter = router({
 
   videoInfo: protectedProcedure.input(z.object({ uploadId: z.string() })).query(async ({ input }) => {
     try {
-      return await videoInfo(input.uploadId);
+      return await videoInfo(input.uploadId, deps);
     } catch (err) {
       internal(err, 'Failed to read video info:', 'Failed to read video info');
     }
@@ -273,11 +274,11 @@ export const uploadsRouter = router({
     .input(z.object({ uploadId: z.string() }).merge(MetadataSchema))
     .mutation(async ({ input }) => {
       try {
-        const { sync } = await updateMetadata(input.uploadId, {
-          title: input.title,
-          description: input.description,
-          tags: input.tags,
-        });
+        const { sync } = await updateMetadata(
+          input.uploadId,
+          { title: input.title, description: input.description, tags: input.tags },
+          deps
+        );
         return { ok: true, sync };
       } catch (err) {
         internal(err, 'Failed to update metadata:', 'Failed to update metadata');

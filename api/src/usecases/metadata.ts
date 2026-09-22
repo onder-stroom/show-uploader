@@ -1,30 +1,31 @@
 import { baseTitle } from '@show-uploader/domain';
-import { db } from '../db/client';
-import { getUploadWithJobs, updateUploadMetadata } from '../db/queries';
-import { syncMixcloudMetadata, syncYoutubeMetadata } from '../services/platform-metadata';
-import { resolveGenreIds, updateArchiveRecord } from '../services/shows-api';
+import type { ApiDeps, MetadataEdit } from '../ports';
 import { UseCaseError } from './errors';
 
-export type MetadataEdit = { title: string; description: string; tags: string[] };
+export type { MetadataEdit };
 
 /**
  * Edit published metadata and push it to the local DB, each published platform,
  * and the PocketBase archive record. Platform failures are reported per target
  * (`sync`), not fatal — the DB always updates so the operator's edit isn't lost.
  */
-export async function updateMetadata(uploadId: string, edit: MetadataEdit) {
-  const upload = await getUploadWithJobs(db, uploadId);
+export async function updateMetadata(
+  uploadId: string,
+  edit: MetadataEdit,
+  { uploads, platforms, agenda }: Pick<ApiDeps, 'uploads' | 'platforms' | 'agenda'>
+) {
+  const upload = await uploads.get(uploadId);
   if (!upload) throw new UseCaseError('NOT_FOUND', 'Upload not found');
 
-  await updateUploadMetadata(db, upload.id, edit);
+  await uploads.updateMetadata(upload.id, edit);
 
   const sync: Record<string, 'ok' | string> = {};
   const yt = upload.jobs.find((j) => j.platform === 'youtube' && j.status === 'done' && j.result_url);
   const mc = upload.jobs.find((j) => j.platform === 'mixcloud' && j.status === 'done' && j.result_url);
 
   const [ytErr, mcErr] = await Promise.all([
-    yt ? syncYoutubeMetadata(yt.result_url!, edit) : Promise.resolve<string | null>(null),
-    mc ? syncMixcloudMetadata(mc.result_url!, edit) : Promise.resolve<string | null>(null),
+    yt ? platforms.syncYoutube(yt.result_url!, edit) : Promise.resolve<string | null>(null),
+    mc ? platforms.syncMixcloud(mc.result_url!, edit) : Promise.resolve<string | null>(null),
   ]);
   if (yt) sync.youtube = ytErr ?? 'ok';
   if (mc) sync.mixcloud = mcErr ?? 'ok';
@@ -33,13 +34,13 @@ export async function updateMetadata(uploadId: string, edit: MetadataEdit) {
     // Tags are the PocketBase genres relation (PB is master) — resolve the
     // edited names to genre IDs (creating any new ones). Only write the relation
     // when tags are present, so clearing tags never wipes curated genres.
-    const genres = edit.tags.length ? await resolveGenreIds(edit.tags) : [];
+    const genres = edit.tags.length ? await agenda.resolveGenres(edit.tags) : [];
     // Re-assert the published platform links too, so an edit fully re-syncs the
     // archive record (e.g. after a write-back that failed at publish time).
     const mediaLinks: { label: string; type: string; url: string }[] = [];
     if (yt) mediaLinks.push({ label: 'YouTube', type: 'video', url: yt.result_url! });
     if (mc) mediaLinks.push({ label: 'MixCloud', type: 'audio', url: mc.result_url! });
-    await updateArchiveRecord(upload.show_id, {
+    await agenda.update(upload.show_id, {
       // The archive record keeps the plain title; the date/@coming-soon suffix
       // is only for the platform titles.
       title: baseTitle(edit.title),
