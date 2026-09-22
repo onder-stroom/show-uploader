@@ -33,6 +33,7 @@ import AccessDenied from './pages/AccessDenied';
 import AuthFailed from './pages/AuthFailed';
 import { markSessionHealthy, requestSignin, signOut } from './auth/signin';
 import Storage from './pages/Storage';
+import { pagedSearch, type PagedSearch } from './components/Pager';
 
 function AuthedLayout() {
   const { user, loading, authFailure } = useAuth();
@@ -260,6 +261,7 @@ const uploadRoute = createRoute({
 const archiveRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: '/archive',
+  validateSearch: pagedSearch,
   component: Archive,
 });
 
@@ -272,7 +274,8 @@ const storageRoute = createRoute({
 const historyRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: '/history',
-  validateSearch: (search: Record<string, unknown>): { highlight?: string } => ({
+  validateSearch: (search: Record<string, unknown>): PagedSearch & { highlight?: string } => ({
+    ...pagedSearch(search),
     highlight: typeof search.highlight === 'string' ? search.highlight : undefined,
   }),
   component: History,

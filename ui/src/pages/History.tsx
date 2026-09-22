@@ -160,7 +160,7 @@ export default function History() {
             {paged.slice.map((upload) => (
               <UploadCard key={upload.id} upload={upload} highlight={highlight} highlightRef={highlightRef} />
             ))}
-            <Pager page={paged.page} pageCount={paged.pageCount} total={paged.total} setPage={paged.setPage} unit="done" />
+            <Pager {...paged} unit="done" />
           </>
         )}
       </Stack>
