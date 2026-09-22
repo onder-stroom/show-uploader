@@ -7,6 +7,7 @@ import { processCompress } from './jobs/compress';
 import { processPreview } from './jobs/preview';
 import { reconcileStalledJobs, setJobStatus } from './db';
 import { sweepWorkspaces } from './services/workspace';
+import { backfillDurations } from './services/backfill-duration';
 import type { JobPayload, PreviewJobPayload } from './types';
 
 // Reclaim scratch space a previous worker lost. A process killed mid-job never
@@ -28,6 +29,13 @@ reconcileStalledJobs()
     }
   })
   .catch((err) => console.error('Stalled-job reconciliation failed:', err));
+
+// Shows archived before durations were recorded show only a size in the archive.
+backfillDurations()
+  .then((n) => {
+    if (n) console.log(`Backfilled duration for ${n} archived show(s)`);
+  })
+  .catch((err) => console.error('Duration backfill failed:', err));
 
 const worker = new Worker<JobPayload>(
   QUEUE_NAME,

@@ -75,6 +75,20 @@ export async function setVideoDuration(uploadId: string, seconds: number) {
   await db`UPDATE show_uploads SET duration_seconds = ${seconds} WHERE id = ${uploadId}`;
 }
 
+// Archived uploads from before the duration column existed. Only a finished
+// archive counts: its video_s3_key is the trimmed file, so probing it gives the
+// duration the archive job would have recorded.
+export async function getArchivedUploadsMissingDuration() {
+  return db<{ id: string; video_s3_key: string }[]>`
+    SELECT u.id, u.video_s3_key FROM show_uploads u
+    WHERE u.duration_seconds IS NULL
+      AND EXISTS (
+        SELECT 1 FROM platform_jobs j
+        WHERE j.upload_id = u.id AND j.platform = 'archive' AND j.status = 'done'
+      )
+  `;
+}
+
 // Repoint the video archive at the remuxed MP4. Clearing the trim is required,
 // not cosmetic: the retry endpoints rebuild job payloads from this row, and the
 // new file is *already* trimmed — leaving the bounds in place would cut a

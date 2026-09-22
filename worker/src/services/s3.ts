@@ -5,6 +5,7 @@ import {
   DeleteObjectCommand,
   HeadObjectCommand,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
@@ -64,4 +65,11 @@ export async function objectSize(key: string): Promise<number | null> {
 
 export async function deleteFromS3(key: string): Promise<void> {
   await s3.send(new DeleteObjectCommand({ Bucket: (env.S3_BUCKET ?? ''), Key: key }));
+}
+
+// A short-lived GET URL for tools that read by URL (ffprobe), so a whole file
+// needn't be downloaded just to read its header. Signed against the internal
+// endpoint: only the worker itself uses it.
+export async function signedGetUrl(key: string, expiresIn = 600): Promise<string> {
+  return getSignedUrl(s3, new GetObjectCommand({ Bucket: env.S3_BUCKET ?? '', Key: key }), { expiresIn });
 }

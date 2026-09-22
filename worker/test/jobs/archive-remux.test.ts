@@ -2,12 +2,14 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 // Mock every side effect: this exercises the branching around the remux, not
 // ffmpeg or S3 themselves.
-vi.mock('../../src/services/ffmpeg', () => ({
+vi.mock('../../src/services/ffmpeg', async (importOriginal) => ({
+  hms: (await importOriginal<typeof import('../../src/services/ffmpeg')>()).hms,
   extractAudio: vi.fn(async () => {}),
   remuxToMp4: vi.fn(async () => {}),
   trimVideoCopy: vi.fn(async () => {}),
   resolveTrim: vi.fn(async () => ({ trimStart: null, trimEnd: null })),
   measureLoudness: vi.fn(async () => null),
+  probeDuration: vi.fn(async () => 3600),
   cleanup: vi.fn(),
 }));
 
@@ -36,6 +38,7 @@ vi.mock('../../src/db', () => ({
   setJobStatus: vi.fn(async () => {}),
   setAudioKey: vi.fn(async () => {}),
   setVideoKey: vi.fn(async () => {}),
+  setVideoDuration: vi.fn(async () => {}),
   getPlatformJobsForUpload: vi.fn(async () => []),
   createArchiveJobRecord: vi.fn(async () => null),
   getUploadRow: vi.fn(async () => ({ show_id: 'show-1', jingle_s3_key: null })),
