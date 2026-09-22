@@ -51,7 +51,7 @@ External
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/koraysels/show-uploader.git
+git clone https://github.com/onder-stroom/show-uploader.git
 cd show-uploader
 ```
 
