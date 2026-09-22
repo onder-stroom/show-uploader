@@ -20,9 +20,18 @@ pnpm workspace, Node 20, TypeScript everywhere.
 
 ## Architecture
 
-A pragmatic service layer, not hexagonal: routers orchestrate and call concrete
-infrastructure modules directly, and tests swap those modules with `vi.mock`. Follow
-that style. Don't introduce a new pattern in one corner of the codebase.
+Two styles, one per package. Match the one you're in:
+
+- **worker: ports and adapters.** Jobs (`worker/src/jobs/`) take a `deps` argument
+  typed by the interfaces in `worker/src/ports.ts` (S3, Postgres, the queue, the
+  PocketBase write-back, YouTube, MixCloud). `worker/src/adapters.ts` builds the
+  real ones and `worker/src/index.ts` passes them in. A job never imports `db`,
+  `queue`, `s3`, `shows-api` or a platform client. Tests use `test/fakes.ts`
+  (`fakeDeps()`: an in-memory bucket, a job-status log, `vi.fn` everywhere). ffmpeg
+  and the scratch workspace are local tools, not ports; jobs import them and tests
+  `vi.mock` them. A new external system gets a port and an adapter first.
+- **api: service layer.** Routers call use cases, which import concrete modules
+  directly; tests swap those modules with `vi.mock`.
 
 **Publish pipeline.** The UI creates an upload bound to its show. The worker's
 **archive job always runs first** (`worker/src/jobs/archive.ts`): one download, trim,
@@ -44,6 +53,7 @@ Read `docs/architecture/video-lifecycle.md` before touching upload/video state.
 | S3 access / signing | `api/src/services/s3.ts`, `worker/src/services/s3.ts`; UI signs through the `storage.signObject` query |
 | ffmpeg / ffprobe | `worker/src/services/ffmpeg.ts` (trim, remux, loudness, `probeDuration`) |
 | Per-job scratch dirs | `worker/src/services/workspace.ts` |
+| Worker infrastructure | Interfaces in `worker/src/ports.ts`, real ones in `worker/src/adapters.ts`, fakes in `worker/test/fakes.ts` |
 | Queues | `api/src/queue/index.ts` (producers), `worker/src/index.ts` (consumers, concurrency 1 on purpose) |
 | UI data hooks | `ui/src/api/hooks.ts` (tRPC + React Query) |
 | UI video/show status | `ui/src/upload/resolveVideo.ts`, `resolveShowStatus.ts`, the single derivation rules |

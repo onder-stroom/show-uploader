@@ -21,30 +21,8 @@ const MEASURED = {
   target_offset: '0.01',
 };
 
-vi.mock('../../src/services/s3', () => ({
-  downloadFromS3: vi.fn(async () => {}),
-  uploadToS3: vi.fn(async () => {}),
-  deleteFromS3: vi.fn(async () => {}),
-  objectSize: vi.fn(async () => 1234),
-}));
-
-vi.mock('../../src/env', () => ({ env: { ARCHIVE_AUDIO_BITRATE: '256k', APP_PUBLIC_URL: 'https://uploader.test' } }));
-
-// Agenda write-back is best-effort and asserted separately; stub it so these
-// tests stay about the remux branching.
-vi.mock('../../src/services/shows-api', () => ({ finalizeArchiveRecord: vi.fn(async () => {}) }));
-
-vi.mock('../../src/db', () => ({
-  setJobStatus: vi.fn(async () => {}),
-  setAudioKey: vi.fn(async () => {}),
-  setVideoKey: vi.fn(async () => {}),
-  setVideoDuration: vi.fn(async () => {}),
-  getPlatformJobsForUpload: vi.fn(async () => []),
-  createArchiveJobRecord: vi.fn(async () => null),
-  getUploadRow: vi.fn(async () => ({ show_id: 'show-1', jingle_s3_key: null })),
-}));
-
-vi.mock('../../src/queue', () => ({ uploadQueue: { add: vi.fn() }, previewQueue: { add: vi.fn() } }));
+// ffmpeg.ts reads its bitrates from env at import.
+vi.mock('../../src/env', () => ({ env: { ARCHIVE_AUDIO_BITRATE: '256k' } }));
 
 // Per-job scratch dir; paths stay predictable so the assertions below can name them.
 vi.mock('../../src/services/workspace', () => ({
@@ -52,11 +30,12 @@ vi.mock('../../src/services/workspace', () => ({
 }));
 
 import { remuxToMp4, trimVideoCopy, resolveTrim, measureLoudness, extractAudio } from '../../src/services/ffmpeg';
-import { deleteFromS3, uploadToS3 } from '../../src/services/s3';
-import { finalizeArchiveRecord } from '../../src/services/shows-api';
-import { uploadQueue } from '../../src/queue';
-import { getPlatformJobsForUpload } from '../../src/db';
 import { processArchive } from '../../src/jobs/archive';
+import { fakeDeps } from '../fakes';
+
+// Every source key a test below archives from.
+const SOURCES = ['uploads/rec.mkv', 'uploads/rec.mp4', 'shows/rec/video.mp4'];
+let deps: ReturnType<typeof fakeDeps>;
 
 function makeJob(over: Record<string, unknown> = {}) {
   return {
@@ -84,24 +63,28 @@ describe('archive video remux', () => {
     vi.clearAllMocks();
     vi.mocked(resolveTrim).mockResolvedValue({ trimStart: null, trimEnd: null });
     vi.mocked(measureLoudness).mockResolvedValue(null);
+    deps = fakeDeps({ objects: Object.fromEntries(SOURCES.map((k) => [k, 10])) });
+    // ffmpeg is mocked and writes nothing, so answer the post-upload size check
+    // directly rather than from the (empty) uploaded bytes.
+    deps.store.size.mockResolvedValue(1234);
   });
 
   it('remuxes an mkv source and deletes the original', async () => {
-    await processArchive(makeJob());
+    await processArchive(makeJob(), deps);
 
     expect(vi.mocked(remuxToMp4)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(trimVideoCopy)).not.toHaveBeenCalled();
-    expect(vi.mocked(uploadToS3)).toHaveBeenCalledWith(expect.any(String), 'shows/rec/video.mp4', 'video/mp4');
-    expect(vi.mocked(deleteFromS3)).toHaveBeenCalledWith('uploads/rec.mkv');
+    expect(deps.store.upload).toHaveBeenCalledWith(expect.any(String), 'shows/rec/video.mp4', 'video/mp4');
+    expect(deps.store.delete).toHaveBeenCalledWith('uploads/rec.mkv');
   });
 
   // The preview remux already produced this MP4, so there is nothing to rewrap.
   it('does no video work for an untrimmed mp4 source', async () => {
-    await processArchive(makeJob({ videoS3Key: 'uploads/rec.mp4' }));
+    await processArchive(makeJob({ videoS3Key: 'uploads/rec.mp4' }), deps);
 
     expect(vi.mocked(remuxToMp4)).not.toHaveBeenCalled();
     expect(vi.mocked(trimVideoCopy)).not.toHaveBeenCalled();
-    expect(vi.mocked(deleteFromS3)).not.toHaveBeenCalled();
+    expect(deps.store.delete).not.toHaveBeenCalled();
   });
 
   // Without this branch, pre-converting a recording for preview would silently
@@ -109,7 +92,7 @@ describe('archive video remux', () => {
   it('trims an already-mp4 source with a stream copy instead of skipping it', async () => {
     vi.mocked(resolveTrim).mockResolvedValue({ trimStart: '00:00:10', trimEnd: '01:00:00' });
 
-    await processArchive(makeJob({ videoS3Key: 'uploads/rec.mp4', trimStart: '00:00:10', trimEnd: '01:00:00' }));
+    await processArchive(makeJob({ videoS3Key: 'uploads/rec.mp4', trimStart: '00:00:10', trimEnd: '01:00:00' }), deps);
 
     // faststart matters: this writes a new container, and the archive is played
     // in the browser, so it has to stay progressively seekable.
@@ -120,7 +103,7 @@ describe('archive video remux', () => {
       loudness: null,
     });
     expect(vi.mocked(remuxToMp4)).not.toHaveBeenCalled();
-    expect(vi.mocked(uploadToS3)).toHaveBeenCalledWith(expect.any(String), 'shows/rec/video.mp4', 'video/mp4');
+    expect(deps.store.upload).toHaveBeenCalledWith(expect.any(String), 'shows/rec/video.mp4', 'video/mp4');
   });
 
   describe('loudness normalisation', () => {
@@ -129,7 +112,7 @@ describe('archive video remux', () => {
     // One measurement, both artefacts: the downloadable audio and the archived
     // video have to sit at the same level, and measuring twice risks drift.
     it('measures once and applies it to both archives', async () => {
-      await processArchive(makeJob());
+      await processArchive(makeJob(), deps);
 
       expect(vi.mocked(measureLoudness)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(extractAudio).mock.calls[0][2]).toMatchObject({ loudness: MEASURED });
@@ -139,7 +122,7 @@ describe('archive video remux', () => {
     // Normalising is real work even when the container is already right, so the
     // "already mp4, nothing to do" shortcut must not swallow it.
     it('still processes an untrimmed mp4 source', async () => {
-      await processArchive(makeJob({ videoS3Key: 'uploads/rec.mp4' }));
+      await processArchive(makeJob({ videoS3Key: 'uploads/rec.mp4' }), deps);
 
       expect(vi.mocked(trimVideoCopy)).toHaveBeenCalledTimes(1);
       expect(vi.mocked(trimVideoCopy).mock.calls[0][2]).toMatchObject({ loudness: MEASURED });
@@ -150,7 +133,7 @@ describe('archive video remux', () => {
     it('measures the trimmed range, not the whole recording', async () => {
       vi.mocked(resolveTrim).mockResolvedValue({ trimStart: '00:00:10', trimEnd: '01:00:00' });
 
-      await processArchive(makeJob({ trimStart: '00:00:10', trimEnd: '01:00:00' }));
+      await processArchive(makeJob({ trimStart: '00:00:10', trimEnd: '01:00:00' }), deps);
 
       expect(vi.mocked(measureLoudness)).toHaveBeenCalledWith('/tmp/input.mkv', {
         trimStart: '00:00:10',
@@ -162,7 +145,7 @@ describe('archive video remux', () => {
     it('publishes unmodified when measurement fails', async () => {
       vi.mocked(measureLoudness).mockResolvedValue(null);
 
-      await processArchive(makeJob());
+      await processArchive(makeJob(), deps);
 
       expect(vi.mocked(remuxToMp4).mock.calls[0][2]).toMatchObject({ loudness: null });
     });
@@ -174,15 +157,15 @@ describe('archive video remux', () => {
     // queued rows are started by the archive job, with the archived keys —
     // never the source key the archive was itself given.
     it('enqueues queued platform rows with the archived keys', async () => {
-      vi.mocked(getPlatformJobsForUpload).mockResolvedValue([
+      deps.records.getPlatformJobs.mockResolvedValue([
         { id: 'yt-1', platform: 'youtube', status: 'queued', result_url: null },
         { id: 'mc-1', platform: 'mixcloud', status: 'queued', result_url: null },
         { id: 'done-1', platform: 'youtube', status: 'done', result_url: 'x' },
       ] as any);
 
-      await processArchive(makeJob());
+      await processArchive(makeJob(), deps);
 
-      const adds = vi.mocked(uploadQueue.add).mock.calls;
+      const adds = deps.platformQueue.add.mock.calls;
       expect(adds).toHaveLength(2);
       for (const [name, payload] of adds as any) {
         expect(['youtube', 'mixcloud']).toContain(name);
@@ -197,9 +180,9 @@ describe('archive video remux', () => {
     it('enqueues nothing when no platform rows are queued', async () => {
       // clearAllMocks resets calls, not implementations — undo the previous
       // test's mockResolvedValue explicitly.
-      vi.mocked(getPlatformJobsForUpload).mockResolvedValue([] as any);
-      await processArchive(makeJob());
-      expect(vi.mocked(uploadQueue.add)).not.toHaveBeenCalled();
+      deps.records.getPlatformJobs.mockResolvedValue([] as any);
+      await processArchive(makeJob(), deps);
+      expect(deps.platformQueue.add).not.toHaveBeenCalled();
     });
   });
 
@@ -208,9 +191,9 @@ describe('archive video remux', () => {
     // signed URL would be dead within hours. Keyed by the show's S3 folder —
     // which this job just wrote — so resolving one later needs no upload row.
     it('attaches stable recording links to the agenda record', async () => {
-      await processArchive(makeJob());
+      await processArchive(makeJob(), deps);
 
-      expect(vi.mocked(finalizeArchiveRecord)).toHaveBeenCalledWith('show-1', {
+      expect(deps.agenda.finalize).toHaveBeenCalledWith('show-1', {
         mediaLinks: [
           { label: 'cs-archive-video', type: 'cs-archive-video', url: 'https://uploader.test/api/public/shows/rec/video' },
           { label: 'cs-archive-audio', type: 'cs-archive-audio', url: 'https://uploader.test/api/public/shows/rec/audio' },
@@ -221,9 +204,9 @@ describe('archive video remux', () => {
     // The archive is already safely on S3 by this point, so a PocketBase outage
     // must not fail the job and trigger a retry of the whole transcode.
     it('does not fail the job when the write-back errors', async () => {
-      vi.mocked(finalizeArchiveRecord).mockRejectedValueOnce(new Error('pocketbase down'));
+      deps.agenda.finalize.mockRejectedValueOnce(new Error('pocketbase down'));
 
-      await expect(processArchive(makeJob())).resolves.toBeTruthy();
+      await expect(processArchive(makeJob(), deps)).resolves.toBeTruthy();
     });
   });
 
@@ -233,13 +216,13 @@ describe('archive video remux', () => {
   it('is idempotent for a source already in the show layout', async () => {
     vi.mocked(resolveTrim).mockResolvedValue({ trimStart: '00:00:10', trimEnd: null });
 
-    await processArchive(makeJob({ videoS3Key: 'shows/rec/video.mp4', trimStart: '00:00:10' }));
+    await processArchive(makeJob({ videoS3Key: 'shows/rec/video.mp4', trimStart: '00:00:10' }), deps);
 
-    expect(vi.mocked(uploadToS3)).toHaveBeenCalledWith(
+    expect(deps.store.upload).toHaveBeenCalledWith(
       expect.any(String),
       'shows/rec/video.mp4',
       'video/mp4'
     );
-    expect(vi.mocked(deleteFromS3)).not.toHaveBeenCalled();
+    expect(deps.store.delete).not.toHaveBeenCalled();
   });
 });

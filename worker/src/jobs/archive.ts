@@ -1,7 +1,7 @@
 import type { Job } from 'bullmq';
 import path from 'path';
 import type { JobPayload } from '../types';
-import { downloadFromS3, uploadToS3, deleteFromS3, objectSize } from '../services/s3';
+import type { WorkerDeps } from '../ports';
 import {
   extractAudio,
   remuxToMp4,
@@ -13,25 +13,16 @@ import {
   hms,
   type LoudnessMeasurement,
 } from '../services/ffmpeg';
-import { env } from '../env';
-import { finalizeArchiveRecord } from '../services/shows-api';
-import {
-  setJobStatus,
-  setAudioKey,
-  setVideoKey,
-  setVideoDuration,
-  getPlatformJobsForUpload,
-  getUploadRow,
-  createArchiveJobRecord,
-} from '../db';
-import { uploadQueue } from '../queue';
 import { createWorkspace } from '../services/workspace';
 import { showAudioKey, showVideoKey } from '@show-uploader/domain';
 
-export async function processArchive(job: Job<JobPayload>): Promise<string> {
+type ArchiveDeps = Pick<WorkerDeps, 'store' | 'records' | 'agenda' | 'platformQueue' | 'config'>;
+
+export async function processArchive(job: Job<JobPayload>, deps: ArchiveDeps): Promise<string> {
+  const { store, records, platformQueue, config } = deps;
   const { jobId, uploadId, videoS3Key, trimStart, trimEnd, autoTrimSilence } = job.data;
 
-  await setJobStatus(jobId, 'processing', { progress_pct: 0 });
+  await records.setJobStatus(jobId, 'processing', { progress_pct: 0 });
 
   const ext = path.extname(videoS3Key) || '.mkv';
   const base = path.basename(videoS3Key, ext);
@@ -44,13 +35,13 @@ export async function processArchive(job: Job<JobPayload>): Promise<string> {
   // drives the live SSE bar, and letting them drift makes a finished job look
   // stuck on one screen and not the other.
   const report = async (pct: number) => {
-    await setJobStatus(jobId, 'processing', { progress_pct: pct });
+    await records.setJobStatus(jobId, 'processing', { progress_pct: pct });
     await job.updateProgress({ uploadId, platform: 'archive', pct });
   };
 
   try {
     await job.updateProgress({ uploadId, platform: 'archive', pct: 5 });
-    await downloadFromS3(videoS3Key, inputPath);
+    await store.download(videoS3Key, inputPath);
 
     await report(20);
 
@@ -72,7 +63,7 @@ export async function processArchive(job: Job<JobPayload>): Promise<string> {
       0,
       Math.round((trim.trimEnd ? hms(trim.trimEnd) : rawDuration) - hms(trim.trimStart ?? '00:00:00'))
     );
-    await setVideoDuration(uploadId, durationSeconds);
+    await records.setDuration(uploadId, durationSeconds);
 
     // Measured once and reused for both archives, so the downloadable audio and
     // the archived video sit at exactly the same level.
@@ -90,32 +81,33 @@ export async function processArchive(job: Job<JobPayload>): Promise<string> {
     });
 
     const audioKey = showAudioKey(videoS3Key);
-    await uploadToS3(audioPath, audioKey, 'audio/mp4');
-    await setAudioKey(uploadId, audioKey);
+    await store.upload(audioPath, audioKey, 'audio/mp4');
+    await records.setAudioKey(uploadId, audioKey);
 
     await report(60);
 
-    const mp4Key = await remuxVideoToMp4(job, { uploadId, jobId, videoS3Key, ext, inputPath, mp4Path, trim, loudness });
+    const mp4Key = await remuxVideoToMp4(job, deps, { uploadId, jobId, videoS3Key, ext, inputPath, mp4Path, trim, loudness });
 
     // The permanent public link, not the raw S3 key: this lands verbatim as the
     // job's "view" link in the UI, and a key rendered as an href 404s.
-    await setJobStatus(jobId, 'done', { result_url: publicShowUrl(audioKey) ?? audioKey, progress_pct: 100 });
+    await records.setJobStatus(jobId, 'done', { result_url: publicShowUrl(config.appPublicUrl, audioKey) ?? audioKey, progress_pct: 100 });
     await job.updateProgress({ uploadId, platform: 'archive', pct: 100 });
 
-    await publishArchiveLinks(uploadId, audioKey);
+    await publishArchiveLinks(deps, uploadId, audioKey);
 
     // The archive is the source for everything downstream: platform jobs are
     // created queued at submit and started HERE, on the finished artefacts —
     // one download, one trim, one loudness pass, and the platforms become thin
     // uploads of the same two files everyone gets. Also what makes "MixCloud
     // succeeded but the archive failed" impossible: the archive comes first.
-    const rows = await getPlatformJobsForUpload(uploadId);
+    const rows = await records.getPlatformJobs(uploadId);
     for (const row of rows) {
       if (row.platform === 'archive' || row.platform === 'compress' || row.status !== 'queued') continue;
-      await uploadQueue.add(row.platform, {
+      const platform = row.platform as 'youtube' | 'mixcloud';
+      await platformQueue.add(platform, {
         ...job.data,
         jobId: row.id,
-        platform: row.platform as 'youtube' | 'mixcloud',
+        platform,
         videoS3Key: mp4Key,
         audioS3Key: audioKey,
         // Already applied while archiving — re-trimming would cut the show twice.
@@ -128,7 +120,7 @@ export async function processArchive(job: Job<JobPayload>): Promise<string> {
     return JSON.stringify({ uploadId, platform: 'archive', key: audioKey });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await setJobStatus(jobId, 'failed', { error: msg });
+    await records.setJobStatus(jobId, 'failed', { error: msg });
     throw err;
   } finally {
     ws.cleanup();
@@ -156,21 +148,25 @@ export async function processArchive(job: Job<JobPayload>): Promise<string> {
 // The permanent public link for an archived artefact, keyed by the show's own
 // S3 folder (shows/<folder>/audio.m4a → …/api/public/shows/<folder>/audio).
 // Null when APP_PUBLIC_URL is unset — callers keep their fallback.
-function publicShowUrl(archiveKey: string): string | null {
-  if (!env.APP_PUBLIC_URL) return null;
+function publicShowUrl(appPublicUrl: string | null, archiveKey: string): string | null {
+  if (!appPublicUrl) return null;
   const [, folder, file] = archiveKey.split('/');
   if (!folder || !file) return null;
   const which = file.split('.')[0];
-  return `${env.APP_PUBLIC_URL.replace(/\/$/, '')}/api/public/shows/${folder}/${which}`;
+  return `${appPublicUrl.replace(/\/$/, '')}/api/public/shows/${folder}/${which}`;
 }
 
-async function publishArchiveLinks(uploadId: string, archiveKey: string): Promise<void> {
-  if (!env.APP_PUBLIC_URL) {
+async function publishArchiveLinks(
+  { records, agenda, config }: Pick<WorkerDeps, 'records' | 'agenda' | 'config'>,
+  uploadId: string,
+  archiveKey: string
+): Promise<void> {
+  if (!config.appPublicUrl) {
     console.warn('APP_PUBLIC_URL unset — skipping archive links on the agenda record');
     return;
   }
   try {
-    const row = await getUploadRow(uploadId);
+    const row = await records.getUpload(uploadId);
     if (!row?.show_id) return;
 
     // Keyed by the show's own S3 folder, which this job just wrote and so
@@ -178,8 +174,8 @@ async function publishArchiveLinks(uploadId: string, archiveKey: string): Promis
     // needs no upload row and no guessing at which folder belongs to which
     // show — the two things that kept taking archived recordings offline.
     const folder = archiveKey.split('/')[1];
-    const base = `${env.APP_PUBLIC_URL.replace(/\/$/, '')}/api/public/shows/${folder}`;
-    await finalizeArchiveRecord(row.show_id, {
+    const base = `${config.appPublicUrl.replace(/\/$/, '')}/api/public/shows/${folder}`;
+    await agenda.finalize(row.show_id, {
       mediaLinks: [
         { label: 'cs-archive-video', type: 'cs-archive-video', url: `${base}/video` },
         { label: 'cs-archive-audio', type: 'cs-archive-audio', url: `${base}/audio` },
@@ -201,6 +197,7 @@ async function publishArchiveLinks(uploadId: string, archiveKey: string): Promis
  */
 async function remuxVideoToMp4(
   job: Job<JobPayload>,
+  { store, records }: Pick<WorkerDeps, 'store' | 'records'>,
   ctx: {
     uploadId: string;
     jobId: string;
@@ -224,7 +221,7 @@ async function remuxVideoToMp4(
 
   const onProgress = async (pct: number) => {
     const adjusted = 60 + Math.round(pct * 0.3);
-    await setJobStatus(jobId, 'processing', { progress_pct: adjusted });
+    await records.setJobStatus(jobId, 'processing', { progress_pct: adjusted });
     await job.updateProgress({ uploadId, platform: 'archive', pct: adjusted });
   };
 
@@ -256,14 +253,14 @@ async function remuxVideoToMp4(
   // Published artefacts move into the show's own folder; the source key may
   // still be under incoming/, which is exactly what this migration away from.
   const mp4Key = showVideoKey(`${videoS3Key.slice(0, -ext.length)}.mp4`);
-  await uploadToS3(mp4Path, mp4Key, 'video/mp4');
+  await store.upload(mp4Path, mp4Key, 'video/mp4');
 
-  const size = await objectSize(mp4Key);
+  const size = await store.size(mp4Key);
   if (!size) throw new Error(`Remuxed MP4 missing or empty on S3: ${mp4Key}`);
 
-  await setVideoKey(uploadId, mp4Key);
+  await records.setVideoKey(uploadId, mp4Key);
 
-  await setJobStatus(jobId, 'processing', { progress_pct: 95 });
+  await records.setJobStatus(jobId, 'processing', { progress_pct: 95 });
   await job.updateProgress({ uploadId, platform: 'archive', pct: 95 });
 
   // Past the point of no return for the original: the MP4 is verified on S3 and
@@ -272,7 +269,7 @@ async function remuxVideoToMp4(
   // Only when the key actually changed. A trimmed MP4 is written back over its
   // own key, so deleting "the original" here would delete the file just uploaded.
   if (mp4Key !== videoS3Key) {
-    await deleteFromS3(videoS3Key).catch((err) =>
+    await store.delete(videoS3Key).catch((err) =>
       console.warn(`Remuxed to ${mp4Key} but could not delete ${videoS3Key}:`, err)
     );
   }

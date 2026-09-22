@@ -9,6 +9,10 @@ import { reconcileStalledJobs, setJobStatus } from './db';
 import { sweepWorkspaces } from './services/workspace';
 import { backfillDurations } from './services/backfill-duration';
 import type { JobPayload, PreviewJobPayload } from './types';
+import { createDeps } from './adapters';
+
+// Composition root: the one place the jobs' ports meet the real infrastructure.
+const deps = createDeps();
 
 // Reclaim scratch space a previous worker lost. A process killed mid-job never
 // reaches its cleanup, orphaning multi-GB files with nothing to remove them —
@@ -43,13 +47,13 @@ const worker = new Worker<JobPayload>(
     console.log(`Processing job ${job.id}: ${job.data.platform} for upload ${job.data.uploadId}`);
     switch (job.data.platform) {
       case 'youtube':
-        return processYoutube(job);
+        return processYoutube(job, deps);
       case 'mixcloud':
-        return processMixcloud(job);
+        return processMixcloud(job, deps);
       case 'archive':
-        return processArchive(job);
+        return processArchive(job, deps);
       case 'compress':
-        return processCompress(job);
+        return processCompress(job, deps);
       default:
         throw new Error(`Unknown platform: ${String(job.data.platform)}`);
     }
@@ -91,7 +95,7 @@ const previewWorker = new Worker<PreviewJobPayload>(
   PREVIEW_QUEUE_NAME,
   async (job) => {
     console.log(`Processing preview remux: ${job.data.videoS3Key}`);
-    return processPreview(job);
+    return processPreview(job, deps);
   },
   { connection: redis, concurrency: 1 }
 );
@@ -117,7 +121,7 @@ const compressWorker = new Worker<JobPayload>(
   COMPRESS_QUEUE_NAME,
   async (job) => {
     console.log(`Processing compress ${job.id} for upload ${job.data.uploadId}`);
-    return processCompress(job);
+    return processCompress(job, deps);
   },
   { connection: redis, concurrency: 1 }
 );

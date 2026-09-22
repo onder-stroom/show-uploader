@@ -1,10 +1,9 @@
 import type { Job } from 'bullmq';
 import path from 'path';
 import type { PreviewJobPayload } from '../types';
-import { downloadFromS3, uploadToS3, deleteFromS3, objectSize } from '../services/s3';
+import type { WorkerDeps } from '../ports';
 import { remuxToMp4, cleanup } from '../services/ffmpeg';
 import { createWorkspace } from '../services/workspace';
-import { repointPreviewKey } from '../db';
 
 /**
  * Make a recording playable in a browser, before it is published.
@@ -23,7 +22,10 @@ import { repointPreviewKey } from '../db';
  * only then drop the original. A failure before the repoint leaves the source on
  * S3 and still referenced, so pressing preview again simply retries.
  */
-export async function processPreview(job: Job<PreviewJobPayload>): Promise<string> {
+export async function processPreview(
+  job: Job<PreviewJobPayload>,
+  { store, records }: Pick<WorkerDeps, 'store' | 'records'>
+): Promise<string> {
   const { videoS3Key } = job.data;
 
   const ext = path.extname(videoS3Key);
@@ -40,7 +42,7 @@ export async function processPreview(job: Job<PreviewJobPayload>): Promise<strin
 
   try {
     await job.updateProgress(5);
-    await downloadFromS3(videoS3Key, inputPath);
+    await store.download(videoS3Key, inputPath);
 
     await remuxToMp4(inputPath, mp4Path, {
       onProgress: async (pct) => {
@@ -53,13 +55,13 @@ export async function processPreview(job: Job<PreviewJobPayload>): Promise<strin
     // twice while a multi-GB upload runs.
     cleanup(inputPath);
 
-    await uploadToS3(mp4Path, mp4Key, 'video/mp4');
+    await store.upload(mp4Path, mp4Key, 'video/mp4');
 
-    const size = await objectSize(mp4Key);
+    const size = await store.size(mp4Key);
     if (!size) throw new Error(`Remuxed MP4 missing or empty on S3: ${mp4Key}`);
 
     const filename = `${path.basename(videoS3Key, ext)}.mp4`;
-    const repointed = await repointPreviewKey(videoS3Key, mp4Key, filename, size);
+    const repointed = await records.repointPreview(videoS3Key, mp4Key, filename, size);
 
     // Nothing references this recording any more — the record was replaced or
     // removed while the remux ran. Deleting the source now would strand the MP4
@@ -72,7 +74,7 @@ export async function processPreview(job: Job<PreviewJobPayload>): Promise<strin
 
     // Past the point of no return: the MP4 is verified and the rows point at it.
     // A failure here leaves an orphan, never a dead link.
-    await deleteFromS3(videoS3Key).catch((err) =>
+    await store.delete(videoS3Key).catch((err) =>
       console.warn(`Remuxed to ${mp4Key} but could not delete ${videoS3Key}:`, err)
     );
 

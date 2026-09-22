@@ -1,12 +1,8 @@
 import type { Job } from 'bullmq';
 import fs from 'fs';
 import type { JobPayload } from '../types';
-import { env } from '../env';
-import { downloadFromS3 } from '../services/s3';
-import { uploadToMixcloud } from '../services/mixcloud-client';
+import type { WorkerDeps } from '../ports';
 import { prependJingle, captureSquareFrame, measureLoudness } from '../services/ffmpeg';
-import { setJobStatus, getUploadRow } from '../db';
-import { finalizeArchiveRecord } from '../services/shows-api';
 import { baseTitle, htmlToText } from '@show-uploader/domain';
 import { createWorkspace } from '../services/workspace';
 
@@ -19,17 +15,20 @@ import { createWorkspace } from '../services/workspace';
  * MixCloud plays is the archive's own audio, and the extraction work happens
  * exactly once.
  */
-export async function processMixcloud(job: Job<JobPayload>): Promise<string> {
+export async function processMixcloud(
+  job: Job<JobPayload>,
+  { store, records, agenda, mixcloud }: Pick<WorkerDeps, 'store' | 'records' | 'agenda' | 'mixcloud'>
+): Promise<string> {
   const { jobId, uploadId, videoS3Key, audioS3Key, title, description, tags, imageUrl, jingleS3Key, includeJingle } =
     job.data;
 
-  await setJobStatus(jobId, 'processing', { progress_pct: 0 });
+  await records.setJobStatus(jobId, 'processing', { progress_pct: 0 });
 
   if (!audioS3Key) {
     // Platform jobs are enqueued by the archive job with both keys — a payload
     // without one predates the inversion or was hand-built wrong.
     const msg = 'No archived audio for this upload — run the archive job first';
-    await setJobStatus(jobId, 'failed', { error: msg });
+    await records.setJobStatus(jobId, 'failed', { error: msg });
     throw new Error(msg);
   }
 
@@ -42,9 +41,9 @@ export async function processMixcloud(job: Job<JobPayload>): Promise<string> {
 
   try {
     await job.updateProgress({ uploadId, platform: 'mixcloud', pct: 5 });
-    await downloadFromS3(audioS3Key, audioPath);
+    await store.download(audioS3Key, audioPath);
 
-    await setJobStatus(jobId, 'processing', { progress_pct: 25 });
+    await records.setJobStatus(jobId, 'processing', { progress_pct: 25 });
     await job.updateProgress({ uploadId, platform: 'mixcloud', pct: 25 });
 
     let finalAudioPath = audioPath;
@@ -53,7 +52,7 @@ export async function processMixcloud(job: Job<JobPayload>): Promise<string> {
       // A missing/misconfigured jingle must not fail the whole upload — publish
       // the audio as-is and warn instead.
       try {
-        await downloadFromS3(jingleS3Key, jinglePath);
+        await store.download(jingleS3Key, jinglePath);
         // Measured separately so the jingle lands at the same target as the show
         // rather than whatever level it happens to be mastered at. The show
         // audio itself is already at target — the archive job put it there.
@@ -68,7 +67,7 @@ export async function processMixcloud(job: Job<JobPayload>): Promise<string> {
       }
     }
 
-    await setJobStatus(jobId, 'processing', { progress_pct: 50 });
+    await records.setJobStatus(jobId, 'processing', { progress_pct: 50 });
     await job.updateProgress({ uploadId, platform: 'mixcloud', pct: 50 });
 
     // Cover art: the PocketBase record image (the master cover, set by the
@@ -76,33 +75,22 @@ export async function processMixcloud(job: Job<JobPayload>): Promise<string> {
     // video — fetched only for this, since the audio upload needs no video.
     // Both are non-fatal — publish coverless if they fail.
     if (imageUrl) {
-      try {
-        // Fetch the PB cover over the internal host (the public one isn't reachable
-        // from inside the box — NAT hairpin); falls back to the URL as-is if unset.
-        const coverUrl =
-          env.POCKETBASE_INTERNAL_URL && env.POCKETBASE_URL
-            ? imageUrl.replace(env.POCKETBASE_URL, env.POCKETBASE_INTERNAL_URL)
-            : imageUrl;
-        const r = await fetch(coverUrl);
-        if (r.ok) await fs.promises.writeFile(thumbPath, Buffer.from(await r.arrayBuffer()));
-        else console.warn(`PB cover fetch ${r.status}, falling back to frame`);
-      } catch (err) {
-        console.warn('PB cover fetch failed, falling back to frame:', err instanceof Error ? err.message : err);
-      }
+      const cover = await agenda.fetchCover(imageUrl);
+      if (cover) await fs.promises.writeFile(thumbPath, cover);
     }
     if (!fs.existsSync(thumbPath)) {
       try {
-        await downloadFromS3(videoS3Key, videoPath);
+        await store.download(videoS3Key, videoPath);
         await captureSquareFrame(videoPath, thumbPath, 20);
       } catch (err) {
         console.warn('Cover frame capture failed:', err instanceof Error ? err.message : err);
       }
     }
 
-    await setJobStatus(jobId, 'processing', { progress_pct: 70 });
+    await records.setJobStatus(jobId, 'processing', { progress_pct: 70 });
     await job.updateProgress({ uploadId, platform: 'mixcloud', pct: 70 });
 
-    const resultUrl = await uploadToMixcloud({
+    const resultUrl = await mixcloud.upload({
       audioPath: finalAudioPath,
       title,
       // MixCloud wants plain text; the description is rich-text HTML (the PB master).
@@ -111,13 +99,13 @@ export async function processMixcloud(job: Job<JobPayload>): Promise<string> {
       imagePath: fs.existsSync(thumbPath) ? thumbPath : undefined,
     });
 
-    await setJobStatus(jobId, 'done', { result_url: resultUrl, progress_pct: 100 });
+    await records.setJobStatus(jobId, 'done', { result_url: resultUrl, progress_pct: 100 });
     await job.updateProgress({ uploadId, platform: 'mixcloud', pct: 100 });
 
     // Write MixCloud's link back immediately (merged with any existing links).
-    const row = await getUploadRow(uploadId);
+    const row = await records.getUpload(uploadId);
     if (row) {
-      await finalizeArchiveRecord(row.show_id, {
+      await agenda.finalize(row.show_id, {
         title: baseTitle(title),
         notes: description,
         tags,
@@ -128,7 +116,7 @@ export async function processMixcloud(job: Job<JobPayload>): Promise<string> {
     return JSON.stringify({ uploadId, platform: 'mixcloud', url: resultUrl });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await setJobStatus(jobId, 'failed', { error: msg });
+    await records.setJobStatus(jobId, 'failed', { error: msg });
     throw err;
   } finally {
     ws.cleanup();
