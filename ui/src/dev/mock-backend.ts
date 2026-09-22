@@ -146,6 +146,8 @@ function resolve(proc: string, input: unknown): unknown {
       return { ok: true };
     case 'uploads.create':
       return { uploadId: 'upl_running' };
+    case 'uploads.retryJob':
+      return { ok: true };
     case 'uploads.deleteUpload':
       return { ok: true, stillRunning: 1 };
     case 'uploads.publishRecord':
@@ -234,7 +236,7 @@ function resolve(proc: string, input: unknown): unknown {
         { id: 'pv1', s3_key: 'dropfolder/obs-2026-07-31.mkv', filename: 'obs-2026-07-31.mkv', size_bytes: 2_293_760_000 },
         { id: 'pv2', s3_key: 'dropfolder/obs-2026-07-28.mkv', filename: 'obs-2026-07-28.mkv', size_bytes: 1_500_000_000 },
       ];
-    case 'watcher.claim':
+    case 'watcher.claimPending':
       return { ok: true };
     case 'platform.youtubeStatus':
       return { privacyStatus: 'unlisted' };
