@@ -79,6 +79,19 @@ describe('publishUpload', () => {
     expect(vi.mocked(createUpload)).not.toHaveBeenCalled();
   });
 
+  it('passes the silence checkbox through to the archive job', async () => {
+    vi.mocked(getArchiveShow).mockResolvedValue({ mediaLinks: [] } as never);
+    vi.mocked(createUpload).mockResolvedValue({ id: 'up-1' } as never);
+
+    await publishUpload({ ...input, autoTrimSilence: false });
+
+    expect(vi.mocked(enqueueArchiveJob)).toHaveBeenCalledWith({}, expect.anything(), {
+      delay: 0,
+      includeJingle: true,
+      autoTrimSilence: false,
+    });
+  });
+
   it('enqueues only the archive job; it starts the platforms itself', async () => {
     vi.mocked(getArchiveShow).mockResolvedValue({ mediaLinks: [] } as never);
     vi.mocked(createUpload).mockResolvedValue({ id: 'up-1' } as never);
@@ -132,6 +145,49 @@ describe('retryJob', () => {
         trimEnd: null,
       })
     );
+  });
+});
+
+describe('retryJob for the archive', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  // A first archive that failed before finishing still points at the untrimmed
+  // source; the retry has to apply the operator's trim, not skip it.
+  it('re-runs an unfinished archive with the stored trim and silence detection', async () => {
+    vi.mocked(getUploadWithJobs).mockResolvedValue({
+      ...upload([{ platform: 'archive', status: 'failed' }]),
+      video_s3_key: 'incoming/1785-rec.mkv',
+      trim_start: '00:05:00',
+      trim_end: '02:00:00',
+      jingle_s3_key: 'jingles/intro.m4a',
+    } as never);
+
+    await retryJob('up-1', 'archive');
+
+    expect(vi.mocked(enqueueArchiveJob)).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ trim_start: '00:05:00', trim_end: '02:00:00' }),
+      { includeJingle: true, autoTrimSilence: true }
+    );
+    expect(vi.mocked(uploadQueue.add)).not.toHaveBeenCalled();
+  });
+
+  it('does not cut an already archived recording again', async () => {
+    vi.mocked(getUploadWithJobs).mockResolvedValue(upload([{ platform: 'archive', status: 'done' }]) as never);
+
+    await retryJob('up-1', 'archive');
+
+    expect(vi.mocked(enqueueArchiveJob)).toHaveBeenCalledWith({}, expect.anything(), {
+      includeJingle: false,
+      autoTrimSilence: false,
+    });
+  });
+
+  it('reports a conflict when the archive is already queued to run', async () => {
+    vi.mocked(getUploadWithJobs).mockResolvedValue(upload([{ platform: 'archive', status: 'failed' }]) as never);
+    vi.mocked(enqueueArchiveJob).mockResolvedValueOnce(false);
+
+    expect((await refusal(retryJob('up-1', 'archive'))).code).toBe('CONFLICT');
   });
 });
 

@@ -56,7 +56,9 @@ export async function enqueueArchiveJob(
   upload: ShowUpload & { jobs: PlatformJob[] },
   // includeJingle rides along for the platform jobs the archive enqueues when
   // it finishes — the operator's checkbox isn't persisted anywhere else.
-  opts?: { delay?: number; includeJingle?: boolean }
+  // autoTrimSilence is the form's "cut dead air" checkbox; defaults to on, as
+  // the form does, for callers with no operator choice to pass.
+  opts?: { delay?: number; includeJingle?: boolean; autoTrimSilence?: boolean }
 ): Promise<boolean> {
   let job = upload.jobs.find((j) => j.platform === 'archive');
   if (job?.status === 'processing') return false;
@@ -77,7 +79,7 @@ export async function enqueueArchiveJob(
       imageUrl: upload.image_url,
       jingleS3Key: upload.jingle_s3_key,
       includeJingle: opts?.includeJingle ?? false,
-      autoTrimSilence: true,
+      autoTrimSilence: opts?.autoTrimSilence ?? true,
       trimStart: upload.trim_start,
       trimEnd: upload.trim_end,
     },

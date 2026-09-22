@@ -91,7 +91,11 @@ export async function publishUpload(data: PublishInput) {
   // only the archive job enters the queue — it enqueues the platforms itself
   // when its artefacts exist. That ordering is what makes "MixCloud succeeded
   // but the archive failed" impossible, and it cut the per-show work to a third.
-  await enqueueArchiveJob(db, { ...upload, jobs }, { delay, includeJingle: data.includeJingle });
+  await enqueueArchiveJob(
+    db,
+    { ...upload, jobs },
+    { delay, includeJingle: data.includeJingle, autoTrimSilence: data.autoTrimSilence }
+  );
 
   // The show is now published — free its claim so it drops off everyone's
   // "being processed" list immediately, and clear the staged row. Row only: its
@@ -129,6 +133,21 @@ export async function retryJob(uploadId: string, platform: PlatformJob['platform
         'The archive step has not finished — retry that first; it starts the platform uploads itself.'
       );
     }
+  }
+
+  // The archive retries the way it first ran: from the row's source key and
+  // trim. The row keeps the trim until an archive succeeds (the worker clears
+  // it along with repointing the key at the trimmed file under shows/), so a
+  // failed first run is retried trimmed and a finished one isn't cut twice.
+  // Silence detection follows the same line. The operator's checkbox isn't
+  // stored, so an unfinished archive gets the form's default (on).
+  if (platform === 'archive') {
+    const queued = await enqueueArchiveJob(db, upload, {
+      includeJingle: !!upload.jingle_s3_key,
+      autoTrimSilence: !upload.video_s3_key.startsWith('shows/'),
+    });
+    if (!queued) throw new UseCaseError('CONFLICT', 'Job already running');
+    return;
   }
 
   await resetPlatformJobForRetry(db, job.id);
