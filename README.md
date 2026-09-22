@@ -127,6 +127,8 @@ Production runs as the Komodo stack `show-uploader`, built from `docker-compose.
 
 Komodo's own git webhook is switched off on the stack (it skipped merges silently), so the Action is the only automatic deploy path. After a push, confirm that Komodo's deployed commit matches `master` rather than assuming it shipped.
 
+**`master` is production.** Merging or pushing there deploys within about a minute, so day-to-day work goes on a `feat/` or `fix/` branch and lands through a pull request, merged when the change is actually meant to go live.
+
 ---
 
 ## YouTube OAuth2 setup
