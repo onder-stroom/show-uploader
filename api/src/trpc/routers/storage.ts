@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { TRPCError } from '@trpc/server';
 import { moveObject, createDownloadPresignedUrl, deleteObject } from '../../services/s3';
 import { browse } from '../../services/storage-browse';
-import { planMigration } from '../../services/storage-layout';
+import { planMigration } from '@show-uploader/domain';
 import { db } from '../../db/client';
 import { listPublishedKeys, listUnpublishedKeys, repointStorageKey, isKeyReferenced } from '../../db/queries';
 import { env } from '../../env';

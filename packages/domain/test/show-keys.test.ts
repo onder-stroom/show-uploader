@@ -1,13 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { showVideoKey, showAudioKey, showFolder } from '../../src/services/storage-layout';
+import { showVideoKey, showAudioKey, showFolder } from '../src/storage-layout';
 
 /**
- * These literals are duplicated in api/test/services/storage-layout.test.ts on
- * purpose. The two packages carry their own copy of the layout rules because
- * there is no runtime import path between them, so pinning the same strings on
- * both sides is what catches the copies drifting apart.
- */
-describe('published show layout', () => {
+ * The keys a published show's artefacts get, from real recording names. The
+ * worker writes these when archiving; the api's migration must produce the same.
+ */describe('published show layout', () => {
   const REAL = 'incoming/1783776608000-misharog_10.07.2026__coming_soon__2026-07-10_15-52-25.mp4';
 
   it('groups video and audio in one readable, dated folder', () => {

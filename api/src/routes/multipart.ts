@@ -9,7 +9,7 @@ import {
   abortMultipart,
 } from '../services/s3';
 import { upsertStagedUpload } from '../db/queries';
-import { incomingKey } from '../services/storage-layout';
+import { incomingKey } from '@show-uploader/domain';
 
 export const multipartRouter = Router();
 

@@ -4,14 +4,15 @@
   "private": true,
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
-    "dev": "tsx watch --env-file ../.env src/index.ts",
-    "test": "vitest run",
+    "build": "pnpm --filter @show-uploader/domain build && tsc",
+    "dev": "pnpm --filter @show-uploader/domain build && tsx watch --env-file ../.env src/index.ts",
+    "test": "pnpm --filter @show-uploader/domain build && vitest run",
     "typegen": "pnpm dlx pocketbase-typegen --url \"${POCKETBASE_URL:-https://agenda.coming-soon.space}\" --email \"$PB_SERVICE_EMAIL\" --password \"$PB_SERVICE_PASSWORD\" --out src/pocketbase-types.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1093.0",
     "@aws-sdk/s3-request-presigner": "^3.1093.0",
+    "@show-uploader/domain": "workspace:*",
     "@trpc/server": "^11.18.0",
     "bullmq": "^5.80.10",
     "cors": "^2.8.6",

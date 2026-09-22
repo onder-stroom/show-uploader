@@ -24,9 +24,9 @@ import { enqueueArchiveJob } from '../services/archive-jobs';
 import { getLiveState } from '../services/live-guard';
 import { updateArchiveRecord, resolveGenreIds, removeArchiveMediaLink } from '../services/shows-api';
 import { syncYoutubeMetadata, syncMixcloudMetadata, setYoutubePublic, getYoutubePrivacyStatus } from '../services/platform-metadata';
-import { baseTitle } from '../services/format';
+import { baseTitle } from '@show-uploader/domain';
 import { env } from '../env';
-import { incomingKey } from '../services/storage-layout';
+import { incomingKey } from '@show-uploader/domain';
 
 export const uploadsRouter = Router();
 

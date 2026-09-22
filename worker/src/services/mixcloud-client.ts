@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { env } from '../env';
 import { shouldDryRun, simulateUpload } from './dry-run';
-import { capTitle } from './format';
+import { capTitle } from '@show-uploader/domain';
 
 type MixcloudResponse = {
   key?: string;

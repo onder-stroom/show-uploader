@@ -3,3 +3,4 @@ packages:
   - worker
   - ui
   - watcher
+  - packages/*

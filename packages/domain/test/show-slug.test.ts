@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { showSlug, uniqueSlug } from '../../src/services/show-slug';
+import { showSlug, uniqueSlug } from '../src/show-slug';
 
 /**
  * Every case below is a real folder name from the production bucket. Synthetic

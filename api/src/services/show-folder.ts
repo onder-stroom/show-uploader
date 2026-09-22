@@ -1,6 +1,6 @@
 import { objectInfo } from './s3';
 import { browse } from './storage-browse';
-import { slugify } from './show-slug';
+import { slugify } from '@show-uploader/domain';
 
 /**
  * Which `shows/` folder holds a given agenda record's recording.

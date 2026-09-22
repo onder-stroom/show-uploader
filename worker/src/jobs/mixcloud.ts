@@ -7,7 +7,7 @@ import { uploadToMixcloud } from '../services/mixcloud-client';
 import { prependJingle, captureSquareFrame, measureLoudness } from '../services/ffmpeg';
 import { setJobStatus, getUploadRow } from '../db';
 import { finalizeArchiveRecord } from '../services/shows-api';
-import { baseTitle, htmlToText } from '../services/format';
+import { baseTitle, htmlToText } from '@show-uploader/domain';
 import { createWorkspace } from '../services/workspace';
 
 /**

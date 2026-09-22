@@ -7,6 +7,7 @@ COPY api/package.json api/
 COPY worker/package.json worker/
 COPY ui/package.json ui/
 COPY watcher/package.json watcher/
+COPY packages/domain/package.json packages/domain/
 RUN pnpm install --frozen-lockfile
 
 FROM base AS ui-builder
@@ -24,6 +25,7 @@ COPY ui/ ui/
 RUN pnpm --filter @show-uploader/ui build
 
 FROM base AS api-builder
+COPY packages/domain/ packages/domain/
 COPY api/src/ api/src/
 COPY api/tsconfig.json api/
 RUN pnpm --filter @show-uploader/api build
@@ -36,8 +38,10 @@ COPY api/package.json api/
 COPY worker/package.json worker/
 COPY ui/package.json ui/
 COPY watcher/package.json watcher/
-RUN pnpm install --frozen-lockfile --prod --filter @show-uploader/api
+COPY packages/domain/package.json packages/domain/
+RUN pnpm install --frozen-lockfile --prod --filter @show-uploader/api...
 COPY --from=api-builder /app/api/dist api/dist
+COPY --from=api-builder /app/packages/domain/dist packages/domain/dist
 COPY --from=ui-builder /app/ui/dist ui/dist
 # tsc does not copy .sql files; migration runner reads them at runtime
 COPY api/src/db/migrations/ api/dist/db/migrations/

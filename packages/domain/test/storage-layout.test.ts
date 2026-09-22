@@ -5,7 +5,7 @@ import {
   showVideoKey,
   showAudioKey,
   planMigration,
-} from '../../src/services/storage-layout';
+} from '../src/storage-layout';
 
 describe('key construction', () => {
   it('keeps the timestamped basename', () => {

@@ -1,6 +1,6 @@
 import { env } from '../env';
 import type { ArchiveRecord } from '../pocketbase-types';
-import { platformTitle } from './format';
+import { platformTitle } from '@show-uploader/domain';
 import { syncYoutubeMetadata, syncMixcloudMetadata } from './platform-metadata';
 
 // Server-side calls prefer the internal host (no NAT hairpin on a single box).

@@ -2,7 +2,7 @@ import { google } from 'googleapis';
 import fs from 'fs';
 import { env } from '../env';
 import { shouldDryRun, simulateUpload } from './dry-run';
-import { appendHashtags, sanitizeForYoutube, capTitle } from './format';
+import { appendHashtags, sanitizeForYoutube, capTitle } from '@show-uploader/domain';
 
 function getYouTubeClient() {
   if (!env.YOUTUBE_CLIENT_ID || !env.YOUTUBE_CLIENT_SECRET || !env.YOUTUBE_REFRESH_TOKEN) {

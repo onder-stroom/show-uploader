@@ -1,5 +1,5 @@
 import { env } from '../env';
-import { appendHashtags, htmlToText, sanitizeForYoutube, capTitle } from './format';
+import { appendHashtags, htmlToText, sanitizeForYoutube, capTitle } from '@show-uploader/domain';
 
 // Edit already-published metadata (title/description/tags) in place on each
 // platform — no re-upload. Called when an operator changes an archive record.

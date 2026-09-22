@@ -9,8 +9,8 @@
  *
  * Target: 2026-07-10-misharog
  *
- * MUST agree with api/src/services/show-slug.ts, which applies the same rule when
- * renaming existing folders. Tests on both sides pin the same literals.
+ * Shared by the api (renaming existing folders) and the worker (newly published
+ * shows), so both land a recording in the same folder.
  */
 
 /** `1786…-` upload prefixes, sometimes stacked when a recording was replaced. */
@@ -27,7 +27,7 @@ const ALREADY_SLUG = /^\d{4}-\d{2}-\d{2}-/;
 
 const pad = (n: string) => n.padStart(2, '0');
 
-function slugify(text: string): string {
+export function slugify(text: string): string {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')

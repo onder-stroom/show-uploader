@@ -14,6 +14,7 @@ pnpm workspace, Node 20, TypeScript everywhere.
 | `worker/` | BullMQ jobs: ffmpeg, YouTube, MixCloud, archive. |
 | `ui/` | React + Vite + MUI, themed per `DESIGN.md` via `ui/src/theme.ts`. |
 | `watcher/` | Windows drop-folder watcher (runs on the OBS machine, not in Docker). |
+| `packages/domain/` | Pure rules shared by api and worker: show slugs, S3 key layout, platform title/description formatting. |
 | `docs/architecture/` | Design rules that code must keep, e.g. `video-lifecycle.md`. |
 | `docs/superpowers/` | Historical specs and plans. Point-in-time; code wins where they disagree. |
 
@@ -38,7 +39,7 @@ Read `docs/architecture/video-lifecycle.md` before touching upload/video state.
 | New API endpoints | tRPC routers in `api/src/trpc/routers/`. REST (`api/src/routes/`) only for what tRPC can't do: multipart upload, raw cover bytes, SSE, presence, `/api/public`, watcher. |
 | PocketBase reads/writes | `api/src/services/shows-api.ts` (token cache, retries, genre mapping) |
 | Postgres | `api/src/db/queries.ts` (takes `db` as a parameter) and `worker/src/db.ts` |
-| S3 keys and folders | `storage-layout.ts` + `show-slug.ts`, on both the api and the worker side |
+| S3 keys and folders | `@show-uploader/domain` (`storage-layout.ts`, `show-slug.ts`) |
 | S3 access / signing | `api/src/services/s3.ts`, `worker/src/services/s3.ts`; UI signs through the `storage.signObject` query |
 | ffmpeg / ffprobe | `worker/src/services/ffmpeg.ts` (trim, remux, loudness, `probeDuration`) |
 | Per-job scratch dirs | `worker/src/services/workspace.ts` |
@@ -46,7 +47,7 @@ Read `docs/architecture/video-lifecycle.md` before touching upload/video state.
 | UI data hooks | `ui/src/api/hooks.ts` (tRPC + React Query) |
 | UI video/show status | `ui/src/upload/resolveVideo.ts`, `resolveShowStatus.ts`, the single derivation rules |
 | Lists with search + paging | `usePaged` / `Pager` in `ui/src/components/Pager.tsx` (URL-backed; add `pagedSearch` to the route's `validateSearch`) |
-| Formatting (size, duration, hashtags) | `ui/src/format.ts`, `api|worker/src/services/format.ts` |
+| Formatting (size, duration, hashtags) | `ui/src/format.ts`; platform copy in `@show-uploader/domain` (`format.ts`) |
 | Styling | `ui/src/theme.ts` tokens and component defaults, never per-call-site styles |
 
 **Reuse before you write.** Before adding a helper, hook, query, component or job,
@@ -55,16 +56,18 @@ A second copy of a rule is how this codebase has broken before: two token verifi
 caused a sign-in loop, and a component-level URL pin duplicated the query cache. If
 something almost fits, generalise it, and keep every caller on the one version.
 
-**The api ↔ worker pairs** (`show-slug`, `storage-layout`, `format`) are deliberate
-copies, because the packages can't import each other. Each says `MUST agree with …`.
-Change both sides in the same commit, and keep the tests that pin the same literals.
+**Logic both the api and the worker need goes in `packages/domain`**, not in a copy on
+each side. It holds pure functions only: no env, no I/O, no infrastructure clients.
+The api and worker `build`/`dev`/`test` scripts build it first, and it's compiled to
+`dist/`, so run it through those scripts (or `pnpm --filter @show-uploader/domain build`)
+after changing it.
 
 ## Commands
 
 ```bash
 pnpm dev                                   # api + worker + ui
 pnpm dev:ui   # then http://localhost:5173/?mock=1 — fixtures, no backend, no login
-pnpm --filter @show-uploader/api test      # vitest (same for worker, ui)
+pnpm --filter @show-uploader/api test      # vitest (same for worker, ui, domain)
 pnpm --filter @show-uploader/api exec tsc --noEmit
 ```
 

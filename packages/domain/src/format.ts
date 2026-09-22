@@ -47,7 +47,7 @@ export function appendHashtags(description: string, tags: string[]): string {
 // agenda). YouTube/MixCloud descriptions are plain text, so convert to text
 // before pushing: block-level tags become line breaks, other tags are dropped,
 // and the common HTML entities are decoded. Plain-text input passes through
-// unchanged. Kept in sync with api/src/services/format.ts.
+// unchanged (no tags → nothing to strip).
 export function htmlToText(html: string): string {
   if (!html || !/[<&]/.test(html)) return html ?? '';
   return html
@@ -87,4 +87,13 @@ export function baseTitle(title: string): string {
   return (title ?? '')
     .replace(/\s*(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4}\s*)?@\s*coming soon\s*$/i, '')
     .trim();
+}
+
+// The inverse: the platform title convention "<name> <DD.MM.YYYY> @ coming soon"
+// built from a plain PocketBase title + the show date (YYYY-MM-DD). Strips any
+// existing suffix first so re-syncing never doubles it.
+export function platformTitle(name: string, date: string): string {
+  const [y, m, d] = (date ?? '').split('-');
+  const dmy = d && m && y ? `${d}.${m}.${y}` : date;
+  return `${baseTitle(name)} ${dmy} @ coming soon`.trim();
 }

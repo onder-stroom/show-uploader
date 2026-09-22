@@ -5,7 +5,7 @@ import { uploadToYoutube } from '../services/youtube-client';
 import { setJobStatus, getUploadRow } from '../db';
 import { createWorkspace } from '../services/workspace';
 import { finalizeArchiveRecord } from '../services/shows-api';
-import { baseTitle, htmlToText } from '../services/format';
+import { baseTitle, htmlToText } from '@show-uploader/domain';
 
 /**
  * Upload the ARCHIVED video to YouTube.

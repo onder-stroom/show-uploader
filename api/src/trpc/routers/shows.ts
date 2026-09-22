@@ -13,7 +13,7 @@ import {
   resolveGenreIds,
   type ArchivePatch,
 } from '../../services/shows-api';
-import { baseTitle } from '../../services/format';
+import { baseTitle } from '@show-uploader/domain';
 import { generateMeta } from '../../services/groq';
 import { db } from '../../db/client';
 import { recordPlatformSync, getPlatformSyncs } from '../../db/queries';

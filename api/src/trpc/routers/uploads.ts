@@ -66,8 +66,8 @@ import {
   type AgendaShow,
 } from '../../services/shows-api';
 import { syncYoutubeMetadata, syncMixcloudMetadata } from '../../services/platform-metadata';
-import { baseTitle, platformTitle } from '../../services/format';
-import { slugify } from '../../services/show-slug';
+import { baseTitle, platformTitle } from '@show-uploader/domain';
+import { slugify } from '@show-uploader/domain';
 import { env } from '../../env';
 
 // tRPC mirror of routes/uploads.ts (non-SSE, non-multipart). Reuses the exact

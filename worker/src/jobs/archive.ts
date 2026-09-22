@@ -26,7 +26,7 @@ import {
 } from '../db';
 import { uploadQueue } from '../queue';
 import { createWorkspace } from '../services/workspace';
-import { showAudioKey, showVideoKey } from '../services/storage-layout';
+import { showAudioKey, showVideoKey } from '@show-uploader/domain';
 
 export async function processArchive(job: Job<JobPayload>): Promise<string> {
   const { jobId, uploadId, videoS3Key, trimStart, trimEnd, autoTrimSilence } = job.data;
