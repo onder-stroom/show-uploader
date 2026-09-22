@@ -92,9 +92,17 @@ pnpm dev                                   # api + worker + ui
 pnpm dev:ui   # then http://localhost:5173/?mock=1 — fixtures, no backend, no login
 pnpm --filter @show-uploader/api test      # vitest (same for worker, ui, domain)
 pnpm --filter @show-uploader/api exec tsc --noEmit
+pnpm e2e                                   # end-to-end, on the built output (docker + ffmpeg)
 ```
 
 Run the tests and typecheck for every package you touch before committing.
+
+**After a refactor of the jobs, the use cases or the adapters, run `pnpm e2e`.**
+It builds both packages and runs them against a throwaway MinIO + Postgres +
+Redis: real ffmpeg, real S3 and queue, platforms in dry-run, PocketBase stubbed.
+Unit tests pass happily while the wiring is wrong, and production has no safe way
+to try a job — no work runs for days, the dry-run flag is global, and there is no
+exec into the running containers. See `scripts/e2e/README.md`.
 
 ## Deploying
 

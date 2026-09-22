@@ -259,6 +259,23 @@ Shows all uploads with live progress. Each platform shows its status and, once d
 
 ---
 
+## Testing
+
+```bash
+pnpm --filter @show-uploader/api test   # unit tests (same for worker, ui, domain)
+pnpm e2e                                # end-to-end against the built output
+```
+
+`pnpm e2e` starts a throwaway MinIO, Postgres and Redis in docker (on ports that
+can't collide with a running `docker compose up`), builds the api and worker, and
+runs a real recording through the whole pipeline: preview, publish, archive,
+both platform uploads, retry, metadata edit and shrink. YouTube and MixCloud are
+simulated and PocketBase is a stub, so nothing is ever published and no agenda
+record is touched. It needs docker and ffmpeg, and takes a couple of minutes.
+Details in `scripts/e2e/README.md`.
+
+---
+
 ## Working on the UI
 
 The interface is [MUI](https://mui.com) themed to `DESIGN.md` — square corners, monospace, no shadows. Colours, spacing and component defaults all live in `ui/src/theme.ts`; change them there rather than at the call site, and anything that starts looking like stock Material is a gap in that file.

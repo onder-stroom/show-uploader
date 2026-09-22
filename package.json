@@ -7,9 +7,13 @@
     "dev:api": "pnpm --filter @show-uploader/api dev",
     "dev:worker": "pnpm --filter @show-uploader/worker dev",
     "dev:ui": "pnpm --filter @show-uploader/ui dev",
-    "dev": "pnpm run dev:api & pnpm run dev:worker & pnpm run dev:ui"
+    "dev": "pnpm run dev:api & pnpm run dev:worker & pnpm run dev:ui",
+    "e2e": "node scripts/e2e/index.mjs"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "msgpackr-extract"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "msgpackr-extract"
+    ]
   }
 }
