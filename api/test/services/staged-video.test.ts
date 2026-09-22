@@ -9,25 +9,7 @@ vi.mock('../../src/services/s3', () => ({ deleteObject: vi.fn(async () => {}) })
 
 import { takeStagedUpload, isVideoKeyClaimed } from '../../src/db/queries';
 import { deleteObject } from '../../src/services/s3';
-import { deleteStagedVideo, isValidStagedKey } from '../../src/services/staged-video';
-
-describe('isValidStagedKey', () => {
-  it('accepts keys the app itself would have staged', () => {
-    expect(isValidStagedKey('incoming/1785-rec.mkv')).toBe(true);
-  });
-
-  // The exact vulnerability this closes: a caller staging a key the app never
-  // wrote there, so that "replace" would delete something it has no business
-  // touching — a published show, a jingle, anything else in the bucket.
-  it('rejects a key outside incoming/', () => {
-    expect(isValidStagedKey('shows/2026-07-10-misharog/video.mp4')).toBe(false);
-    expect(isValidStagedKey('jingles/intro.m4a')).toBe(false);
-  });
-
-  it('rejects a prefix that merely starts similarly', () => {
-    expect(isValidStagedKey('incoming-fake/rec.mkv')).toBe(false);
-  });
-});
+import { deleteStagedVideo } from '../../src/services/staged-video';
 
 describe('deleteStagedVideo', () => {
   beforeEach(() => {

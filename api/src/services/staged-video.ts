@@ -3,27 +3,16 @@ import { takeStagedUpload, isVideoKeyClaimed } from '../db/queries';
 import { deleteObject } from './s3';
 
 /**
- * Is this a key the app itself could have staged?
- *
- * Staging leads to deletion (see deleteStagedVideo below): "replace" deletes
- * whatever key a staged row holds. Without this check, a caller could stage
- * any key in the bucket — a published show's video, a jingle — and have it
- * deleted the moment someone hits replace. The app itself never stages a key
- * outside incoming/ (see routes/multipart.ts, the only other writer of
- * staged_uploads), so anything else is refused rather than trusted.
- */
-export function isValidStagedKey(key: string): boolean {
-  return key.startsWith('incoming/');
-}
-
-/**
  * Abandon a show's staged pick: delete the row and the S3 object it pointed
- * at. Shared by the tRPC procedure and the REST route, which otherwise
- * duplicated this logic verbatim.
+ * at.
+ *
+ * Whatever key a staged row holds gets deleted here, so staged rows must only
+ * ever hold keys the server built. The one writer is multipart completion
+ * (routes/multipart.ts), with an `incoming/` key from incomingKey(); never add
+ * an endpoint that stages a client-supplied key.
  *
  * Deliberately distinct from the internal cleanup that runs right after a
- * successful publish (`deleteStagedUpload`, called directly from `create` in
- * both routers) — that path's staged key has just become
+ * successful publish (`deleteStagedUpload`, called directly from `create`) — that path's staged key has just become
  * `show_uploads.video_s3_key` and must never be deleted here. This function is
  * only for the operator explicitly abandoning a pick via "replace".
  *

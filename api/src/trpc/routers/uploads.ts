@@ -103,9 +103,8 @@ const MetadataSchema = z.object({
   tags: z.array(z.string()).default([]),
 });
 
-// Re-throw domain TRPCErrors as-is; wrap anything else as INTERNAL_SERVER_ERROR
-// (the REST route logged + returned 500 for these). Keeps try/catch parity with
-// the Express handlers without swallowing intentional 404/409 errors.
+// Re-throw domain TRPCErrors as-is; log and wrap anything else as
+// INTERNAL_SERVER_ERROR, without swallowing intentional 404/409 errors.
 function internal(err: unknown, logMessage: string, message: string): never {
   if (err instanceof TRPCError) throw err;
   console.error(logMessage, err);

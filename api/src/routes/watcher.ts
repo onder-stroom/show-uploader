@@ -37,27 +37,6 @@ watcherRouter.post('/notify', (req, res) => {
   res.json({ ok: true });
 });
 
-// GET /api/watcher/pending — UI polls this to show recently dropped files
-watcherRouter.get('/pending', requireAuth, async (_req, res) => {
-  try {
-    const rows = await db`
-      SELECT * FROM pending_videos
-      WHERE claimed = false
-      ORDER BY created_at DESC
-      LIMIT 20
-    `;
-    res.json(rows);
-  } catch {
-    res.status(500).json({ error: 'Failed to fetch pending videos' });
-  }
-});
-
-// DELETE /api/watcher/pending/:id — mark as claimed once an upload is created
-watcherRouter.delete('/pending/:id', requireAuth, async (req, res) => {
-  await db`UPDATE pending_videos SET claimed = true WHERE id = ${req.params.id}`;
-  res.json({ ok: true });
-});
-
 const ArchivePatchSchema = z.object({
   title: z.string().optional(),
   notes: z.string().optional(),

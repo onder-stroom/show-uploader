@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { showsRouter } from './routes/shows';
-import { uploadsRouter } from './routes/uploads';
 import { eventsRouter } from './routes/events';
 import { multipartRouter } from './routes/multipart';
 import { watcherRouter } from './routes/watcher';
@@ -34,11 +33,11 @@ export function createApp() {
   app.get('/api/auth/me', requireAuth, (_req, res) => res.json({ ok: true }));
   app.use('/api/shows', requireAuth, showsRouter);
   app.use('/api/uploads/multipart', requireAuth, multipartRouter);
-  app.use('/api/uploads', requireAuth, uploadsRouter);
   app.use('/api/uploads', requireAuth, eventsRouter);
   app.use('/api/presence', requireAuth, presenceRouter);
 
-  // tRPC — mounted ALONGSIDE the REST routes above (nothing removed). NOT behind
+  // tRPC — the app's API. The REST routes above are only what tRPC can't carry
+  // (raw bytes, SSE, presence, the watcher and public links). NOT behind
   // requireAuth globally: auth is per-procedure. protectedProcedure enforces the
   // same Zitadel JWT + member/admin role as requireAuth, while watcher procedures (next
   // phase) validate the shared WATCHER_API_KEY inside the procedure instead.

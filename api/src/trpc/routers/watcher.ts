@@ -6,7 +6,7 @@ import { updateArchiveRecord, resolveGenreIds } from '../../services/shows-api';
 import { router, publicProcedure, protectedProcedure } from '../trpc';
 import type { Context } from '../trpc';
 
-// pending_videos row shape (SELECT * from the REST route). The watcher drops a
+// pending_videos row shape (SELECT *). The watcher drops a
 // row here when a file lands on S3; the UI polls it and claims one per upload.
 type PendingVideo = {
   id: string;
@@ -18,9 +18,9 @@ type PendingVideo = {
 };
 
 // The watcher + worker endpoints are gated by the shared WATCHER_API_KEY (NOT the
-// Zitadel member JWT). Mirror the REST route's check exactly — Bearer token from
-// the Authorization header, compared to env.WATCHER_API_KEY — and throw
-// UNAUTHORIZED (→ HTTP 401) on mismatch, same as the REST 401.
+// Zitadel JWT), the same check as routes/watcher.ts: Bearer token from the
+// Authorization header, compared to env.WATCHER_API_KEY, UNAUTHORIZED (→ HTTP
+// 401) on mismatch.
 function assertWatcherKey(ctx: Context): void {
   const raw = ctx.headers.authorization;
   const header = Array.isArray(raw) ? raw[0] ?? '' : raw ?? '';

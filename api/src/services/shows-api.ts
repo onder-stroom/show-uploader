@@ -185,8 +185,7 @@ export async function getArchiveShow(id: string): Promise<AgendaShow | null> {
  * Re-sync a published show's PocketBase metadata (title/description/tags, plus
  * the cover to MixCloud) to its linked platforms. `only` narrows which platforms
  * (undefined/null = all linked). Returns { youtube?, mixcloud? } — 'ok' or an
- * error string per platform. Returns null if the show doesn't exist. Shared by
- * the REST route and the tRPC procedure so both behave identically.
+ * error string per platform. Returns null if the show doesn't exist.
  */
 export async function syncShowToPlatforms(
   id: string,

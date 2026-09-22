@@ -1,6 +1,5 @@
 import {
   S3Client,
-  PutObjectCommand,
   GetObjectCommand,
   CreateBucketCommand,
   CreateMultipartUploadCommand,
@@ -56,18 +55,6 @@ export async function ensureBucket(): Promise<void> {
       await new Promise((r) => setTimeout(r, 2000)); // minio may not be ready yet
     }
   }
-}
-
-export async function createUploadPresignedUrl(key: string, contentType: string) {
-  if (!env.S3_ENDPOINT || !env.S3_BUCKET) {
-    throw new Error('S3 not configured (S3_ENDPOINT, S3_BUCKET required)');
-  }
-  const command = new PutObjectCommand({
-    Bucket: env.S3_BUCKET,
-    Key: key,
-    ContentType: contentType,
-  });
-  return getSignedUrl(presignS3, command, { expiresIn: 3600 * 6 }); // 6 hours
 }
 
 // Presigned GET so the UI can download a private object (e.g. the archived MP4)

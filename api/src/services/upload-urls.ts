@@ -2,8 +2,7 @@ import { createDownloadPresignedUrl } from './s3';
 
 // Replace private S3 keys with browser-reachable presigned download URLs so the
 // UI can download the original video (any format) and the extracted audio
-// independently — the bucket itself stays private. Shared by the REST route and
-// the tRPC procedure so both return identically shaped uploads.
+// independently — the bucket itself stays private.
 export async function withDownloadUrls<
   T extends {
     video_s3_key: string;
