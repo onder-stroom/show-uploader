@@ -29,6 +29,44 @@ const ACCESS_ROLES = ['member', 'admin'];
 
 const JWKS = createRemoteJWKSet(new URL(`https://${env.ZITADEL_DOMAIN}/oauth/v2/keys`));
 
+function nameFromClaims(claims: Record<string, unknown>): string | null {
+  for (const key of ['name', 'preferred_username', 'email']) {
+    const value = claims[key];
+    if (typeof value === 'string' && value) return value;
+  }
+  return null;
+}
+
+// Zitadel's JWT access tokens usually carry no profile claims: the name lives in
+// the ID token, which never reaches the api. Without this, the presence roster
+// and claim badges show a bare user id. The userinfo endpoint answers for the
+// token's own user (the UI requests the profile and email scopes), and names
+// barely change, so one lookup per user per hour is plenty. A failed lookup
+// never fails the request (it falls back to the id) and is remembered for a few
+// minutes, so a Zitadel hiccup can't add a slow call to every request.
+const USERINFO_TTL_MS = 60 * 60 * 1000;
+const USERINFO_FAILURE_TTL_MS = 5 * 60 * 1000;
+const userinfoNames = new Map<string, { name: string | null; until: number }>();
+
+export async function nameFromUserinfo(token: string, sub: string): Promise<string | null> {
+  const cached = userinfoNames.get(sub);
+  if (cached && Date.now() < cached.until) return cached.name;
+
+  let name: string | null = null;
+  try {
+    const res = await fetch(`https://${env.ZITADEL_DOMAIN}/oidc/v1/userinfo`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) name = nameFromClaims((await res.json()) as Record<string, unknown>);
+    else console.warn(`Auth: userinfo ${res.status} for ${sub}`);
+  } catch (err) {
+    console.warn(`Auth: userinfo lookup failed for ${sub}:`, err instanceof Error ? err.message : err);
+  }
+  userinfoNames.set(sub, { name, until: Date.now() + (name ? USERINFO_TTL_MS : USERINFO_FAILURE_TTL_MS) });
+  return name;
+}
+
 /** Whether a failure says something about the token, or only about our backend. */
 export function classifyAuthError(err: unknown): { status: 401 | 503; code: string } {
   const code = (err as { code?: string })?.code ?? 'ERR_UNKNOWN';
@@ -74,11 +112,7 @@ export async function verifyToken(token: string, where: string): Promise<VerifyR
       return { ok: false, status: 403, code: 'ERR_NOT_MEMBER' };
     }
 
-    const name =
-      (payload.name as string) ||
-      (payload.preferred_username as string) ||
-      (payload.email as string) ||
-      payload.sub!;
+    const name = nameFromClaims(payload) ?? (await nameFromUserinfo(token, payload.sub!)) ?? payload.sub!;
     return { ok: true, user: { sub: payload.sub!, name } };
   } catch (err) {
     const { status, code } = classifyAuthError(err);

@@ -21,9 +21,61 @@ const memberPayload = {
   },
 } as any;
 
+const userinfo = vi.fn();
+
 describe('verifyToken', () => {
-  beforeEach(() => vi.clearAllMocks());
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // No test may reach the real Zitadel; a nameless token looks its user up.
+    userinfo.mockResolvedValue({ ok: false, status: 401 });
+    vi.stubGlobal('fetch', userinfo);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  // Zitadel access tokens carry no profile claims; without the lookup the
+  // presence roster showed an operator as their numeric user id.
+  it('looks up the display name when the token carries none', async () => {
+    userinfo.mockResolvedValue({ ok: true, json: async () => ({ name: 'Benjamin Ikoma' }) });
+    vi.mocked(jwtVerify).mockResolvedValue({
+      payload: { sub: 'nameless-1', 'urn:zitadel:iam:org:project:roles': { admin: {} } },
+    } as any);
+
+    await expect(verifyToken('tok', 'ctx')).resolves.toEqual({
+      ok: true,
+      user: { sub: 'nameless-1', name: 'Benjamin Ikoma' },
+    });
+    expect(userinfo).toHaveBeenCalledWith('https://test.zitadel.cloud/oidc/v1/userinfo', expect.objectContaining({
+      headers: { Authorization: 'Bearer tok' },
+    }));
+
+    // Cached per user: the next request doesn't ask again.
+    await verifyToken('tok', 'ctx');
+    expect(userinfo).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the user id when the lookup fails, without failing auth', async () => {
+    vi.mocked(jwtVerify).mockResolvedValue({
+      payload: { sub: 'nameless-2', 'urn:zitadel:iam:org:project:roles': { member: {} } },
+    } as any);
+
+    await expect(verifyToken('tok', 'ctx')).resolves.toEqual({
+      ok: true,
+      user: { sub: 'nameless-2', name: 'nameless-2' },
+    });
+    // The failure is remembered, so an outage doesn't cost a call per request.
+    await verifyToken('tok', 'ctx');
+    expect(userinfo).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not look up a name the token already has', async () => {
+    vi.mocked(jwtVerify).mockResolvedValue(memberPayload);
+    await verifyToken('tok', 'ctx');
+    expect(userinfo).not.toHaveBeenCalled();
+  });
 
   it('accepts a member token and returns the identity', async () => {
     vi.mocked(jwtVerify).mockResolvedValue(memberPayload);
