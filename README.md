@@ -6,9 +6,9 @@ Upload recorded DJ sets and live shows to YouTube and MixCloud simultaneously. P
 
 - Pulls upcoming shows from your agenda API (title, description, tags)
 - Generates platform-appropriate copy via Groq AI
-- Uploads the full video to **YouTube**
-- Extracts AAC 256kbps audio and optionally prepends a jingle, uploads to **MixCloud**
-- After both succeed: transcodes the raw MKV to MP4 at configurable bitrates and stores it in Minio, then deletes the raw file
+- Archives first: trims, loudness-normalises, remuxes the recording to MP4 and extracts an AAC 256kbps (m4a) audio track, both stored in Minio under the show's folder
+- Then uploads the archived video to **YouTube** and the archived audio to **MixCloud**
+- Writes the YouTube, MixCloud and archive links back to the agenda (PocketBase)
 - Windows drop-folder watcher: drag a recording to a local folder and it uploads to S3 automatically
 
 ---
@@ -120,6 +120,12 @@ docker compose build
 docker compose up -d
 # run any new migration files
 ```
+
+### Production deploys
+
+Production runs as the Komodo stack `show-uploader`, built from `docker-compose.prod.yml` on the `master` branch of [onder-stroom/show-uploader](https://github.com/onder-stroom/show-uploader). Every push to `master` triggers the **Deploy to Komodo** GitHub Action (`.github/workflows/deploy.yml`), which asks Komodo to redeploy and waits for the result. It needs the `KOMODO_URL`, `KOMODO_API_KEY` and `KOMODO_API_SECRET` repo secrets.
+
+Komodo's own git webhook is switched off on the stack (it skipped merges silently), so the Action is the only automatic deploy path. After a push, confirm that Komodo's deployed commit matches `master` rather than assuming it shipped.
 
 ---
 
@@ -234,7 +240,7 @@ node C:\path\to\show-uploader\watcher\dist\index.js
 
 ## Using the web UI
 
-Open `https://your-domain.com` in your browser. You'll be redirected to Zitadel to log in. If your account hasn't been granted the `member` role yet, you'll see an "Access pending approval" screen.
+Open `https://your-domain.com` in your browser. You'll be redirected to Zitadel to log in. If your account hasn't been granted the `member` (or `admin`) role yet, you'll see an "Access pending approval" screen.
 
 ### New Upload
 
@@ -274,10 +280,12 @@ The mock is behind `import.meta.env.DEV` and a dynamic import, so none of it shi
 
 | Route | Auth |
 |---|---|
-| Web UI + all `/api/*` routes | Zitadel OIDC — valid JWT with `member` role required |
+| Web UI + all `/api/*` routes | Zitadel OIDC — valid JWT with the `member` or `admin` project role |
 | `POST /api/watcher/notify` | Bearer token (`WATCHER_API_KEY`) — unaffected by Zitadel |
 
-Users who sign up via Zitadel but haven't been granted the `member` role see "Access pending approval" and cannot use the app. To grant access: Zitadel console → Projects → Team → Users → find the user → assign role `member`.
+Users who sign up via Zitadel but hold neither role see "Access pending approval" and cannot use the app. To grant access: Zitadel console → Projects → Team → Users → find the user → assign role `member` (or `admin`). Other roles on the project, like `website-admin`, don't grant access here.
+
+Zitadel keeps **one grant per user per project**. If the user already has a grant on Team, don't click **New** — that fails with `User grant already exists`. Open the existing grant and tick the extra role there. The user has to sign out and back in afterwards: roles are baked into the token at sign-in.
 
 UI env vars — set in `ui/.env` (not committed to git):
 

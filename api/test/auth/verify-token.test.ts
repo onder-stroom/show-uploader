@@ -50,6 +50,22 @@ describe('verifyToken', () => {
     await expect(verifyToken('t', 'ctx')).resolves.toMatchObject({ ok: false, status: 403 });
   });
 
+  // Zitadel allows one grant per user per project, so an admin can't also
+  // hold member — admin alone has to be enough.
+  it('accepts an admin token without member', async () => {
+    vi.mocked(jwtVerify).mockResolvedValue({
+      payload: { sub: 'u', 'urn:zitadel:iam:org:project:roles': { admin: { orgId: 'org' } } },
+    } as any);
+    await expect(verifyToken('t', 'ctx')).resolves.toMatchObject({ ok: true });
+  });
+
+  it('rejects a token whose only roles grant nothing here', async () => {
+    vi.mocked(jwtVerify).mockResolvedValue({
+      payload: { sub: 'u', 'urn:zitadel:iam:org:project:roles': { 'website-admin': {} } },
+    } as any);
+    await expect(verifyToken('t', 'ctx')).resolves.toMatchObject({ ok: false, status: 403 });
+  });
+
   it('reports a rejected token as 401 with its jose code', async () => {
     vi.mocked(jwtVerify).mockRejectedValue(
       Object.assign(new Error('exp'), { code: 'ERR_JWT_EXPIRED' })

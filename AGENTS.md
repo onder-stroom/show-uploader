@@ -1,0 +1,117 @@
+# AGENTS.md
+
+Show Uploader publishes recorded DJ sets / live shows from the coming soon agenda to
+YouTube and MixCloud and keeps an archive copy. User-facing setup lives in `README.md`;
+this file is the working brief for coding agents.
+
+## Layout
+
+pnpm workspace, Node 20, TypeScript everywhere.
+
+| Path | What |
+|---|---|
+| `api/` | Express + tRPC, serves the UI build. Auth, PocketBase sync, S3 signing. |
+| `worker/` | BullMQ jobs: ffmpeg, YouTube, MixCloud, archive. |
+| `ui/` | React + Vite + MUI, themed per `DESIGN.md` via `ui/src/theme.ts`. |
+| `watcher/` | Windows drop-folder watcher (runs on the OBS machine, not in Docker). |
+| `docs/architecture/` | Design rules that code must keep, e.g. `video-lifecycle.md`. |
+| `docs/superpowers/` | Historical specs and plans. Point-in-time; code wins where they disagree. |
+
+## Architecture
+
+A pragmatic service layer, not hexagonal: routers orchestrate and call concrete
+infrastructure modules directly, and tests swap those modules with `vi.mock`. Follow
+that style. Don't introduce a new pattern in one corner of the codebase.
+
+**Publish pipeline.** The UI creates an upload bound to its show. The worker's
+**archive job always runs first** (`worker/src/jobs/archive.ts`): one download, trim,
+loudness pass, MP4 remux, m4a extraction, agenda links written to PB. Only then does
+it enqueue the queued YouTube / MixCloud jobs, which are thin uploads of those
+archived files. Don't add a platform job that re-downloads or re-trims the source.
+Read `docs/architecture/video-lifecycle.md` before touching upload/video state.
+
+**Where things live**
+
+| Concern | Use |
+|---|---|
+| Auth (REST + tRPC) | `api/src/auth/verify-token.ts` |
+| New API endpoints | tRPC routers in `api/src/trpc/routers/`. REST (`api/src/routes/`) only for what tRPC can't do: multipart upload, raw cover bytes, SSE, presence, `/api/public`, watcher. |
+| PocketBase reads/writes | `api/src/services/shows-api.ts` (token cache, retries, genre mapping) |
+| Postgres | `api/src/db/queries.ts` (takes `db` as a parameter) and `worker/src/db.ts` |
+| S3 keys and folders | `storage-layout.ts` + `show-slug.ts`, on both the api and the worker side |
+| S3 access / signing | `api/src/services/s3.ts`, `worker/src/services/s3.ts`; UI signs through the `storage.signObject` query |
+| ffmpeg / ffprobe | `worker/src/services/ffmpeg.ts` (trim, remux, loudness, `probeDuration`) |
+| Per-job scratch dirs | `worker/src/services/workspace.ts` |
+| Queues | `api/src/queue/index.ts` (producers), `worker/src/index.ts` (consumers, concurrency 1 on purpose) |
+| UI data hooks | `ui/src/api/hooks.ts` (tRPC + React Query) |
+| UI video/show status | `ui/src/upload/resolveVideo.ts`, `resolveShowStatus.ts`, the single derivation rules |
+| Lists with search + paging | `usePaged` / `Pager` in `ui/src/components/Pager.tsx` (URL-backed; add `pagedSearch` to the route's `validateSearch`) |
+| Formatting (size, duration, hashtags) | `ui/src/format.ts`, `api|worker/src/services/format.ts` |
+| Styling | `ui/src/theme.ts` tokens and component defaults, never per-call-site styles |
+
+**Reuse before you write.** Before adding a helper, hook, query, component or job,
+search for an existing one (`grep` the concern, check the table above) and extend it.
+A second copy of a rule is how this codebase has broken before: two token verifiers
+caused a sign-in loop, and a component-level URL pin duplicated the query cache. If
+something almost fits, generalise it, and keep every caller on the one version.
+
+**The api ↔ worker pairs** (`show-slug`, `storage-layout`, `format`) are deliberate
+copies, because the packages can't import each other. Each says `MUST agree with …`.
+Change both sides in the same commit, and keep the tests that pin the same literals.
+
+## Commands
+
+```bash
+pnpm dev                                   # api + worker + ui
+pnpm dev:ui   # then http://localhost:5173/?mock=1 — fixtures, no backend, no login
+pnpm --filter @show-uploader/api test      # vitest (same for worker, ui)
+pnpm --filter @show-uploader/api exec tsc --noEmit
+```
+
+Run the tests and typecheck for every package you touch before committing.
+
+## Deploying
+
+- Repo: **github.com/onder-stroom/show-uploader** (moved from `koraysels/show-uploader`
+  on 2026-09-22), branch `master`.
+- Production = Komodo stack `show-uploader`, built from `docker-compose.prod.yml`.
+- A push to `master` runs `.github/workflows/deploy.yml`, which redeploys the stack
+  through the Komodo API and waits for the result. Komodo's own webhook is disabled on
+  the stack; the Action is the only automatic path.
+- **Pushing to `master` ships to production.** Don't push without the owner's go-ahead.
+- Never assume a push shipped: compare Komodo's deployed commit to `master`
+  (`gh run list -w "Deploy to Komodo"` plus the stack's deployed hash).
+
+## Auth
+
+Zitadel OIDC. The API verifies JWTs locally (`api/src/auth/verify-token.ts` — the only
+verifier; REST and tRPC both go through it). Access needs the `member` **or** `admin`
+role on the Team project. Zitadel allows one grant per user per project, so an admin
+can't also be given `member`, which is why admin alone passes. Other project roles
+(e.g. `website-admin`) grant nothing here. `POST /api/watcher/notify` uses
+`WATCHER_API_KEY` instead.
+
+## Rules that have bitten before
+
+- **PocketBase is the data master.** The PB archive record owns title, notes, genres
+  (= tags), media links and image; Postgres `show_uploads` is a working copy. Where they
+  disagree, PB wins. Platform titles are derived from the PB title by appending
+  `<DD.MM.YYYY> @ coming soon`, and that suffix never goes back into PB.
+- **Covers go into PB's `image` field**, never S3. The api proxies the upload
+  (`POST /api/shows/:id/cover`). S3/MinIO holds only video/audio.
+- **PB returns 404/400, not 401, to an anonymous caller.** An empty "to process" list,
+  PB sync 404s or genres that won't save mean the api's PB superuser token went bad, not
+  that data is missing. The token is cached with a 15-minute TTL for this reason; keep it.
+- **No endpoint returns a signed URL.** A presigned URL differs on every call; in a
+  polled response it swaps `<video src>` mid-playback. Return keys and sign through the
+  `storage.signObject` query keyed by the object. Keep the dev mock re-signing on every
+  call so this stays visible in `?mock=1`.
+- **Audio is AAC 256k (m4a), never MP3.**
+- **AI copy (Groq) stays short and human**: 2–3 lines, no hype, no keyword stuffing.
+- **Config comes from env vars**, documented in `.env.example`. No hardcoded endpoints or
+  credentials.
+
+## Commits
+
+Conventional Commits (`fix(auth): …`). A one-line subject, and a body of a few lines at
+most explaining why. No AI/Claude attribution lines (`Co-Authored-By`, session links).

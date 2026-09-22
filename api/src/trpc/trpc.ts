@@ -35,7 +35,7 @@ const t = initTRPC.context<Context>().create();
 export const router = t.router;
 export const publicProcedure = t.procedure;
 
-// Enforce the same gate as requireAuth: a valid Zitadel JWT carrying the member
+// Enforce the same gate as requireAuth: a valid Zitadel JWT carrying the member or admin
 // role. Downstream resolvers get a non-null `ctx.user`.
 const enforceMember = t.middleware(({ ctx, next }) => {
   if (!ctx.user) {

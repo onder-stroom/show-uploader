@@ -28,7 +28,7 @@ export function createApp() {
   // recording — see routes/public.ts.
   app.use('/api/public', publicRouter);
 
-  // Protected API — each router requires a valid Zitadel JWT with the member role.
+  // Protected API — each router requires a valid Zitadel JWT with the member or admin role.
   // Scoped to the API only, so the static SPA below stays public (otherwise the
   // login page itself would be gated and the OIDC flow could never start).
   app.get('/api/auth/me', requireAuth, (_req, res) => res.json({ ok: true }));
@@ -40,7 +40,7 @@ export function createApp() {
 
   // tRPC — mounted ALONGSIDE the REST routes above (nothing removed). NOT behind
   // requireAuth globally: auth is per-procedure. protectedProcedure enforces the
-  // same Zitadel JWT + member role as requireAuth, while watcher procedures (next
+  // same Zitadel JWT + member/admin role as requireAuth, while watcher procedures (next
   // phase) validate the shared WATCHER_API_KEY inside the procedure instead.
   app.use('/api/trpc', createExpressMiddleware({ router: appRouter, createContext }));
 

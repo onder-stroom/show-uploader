@@ -43,12 +43,12 @@ describe('toAgendaShow', () => {
     expect(withGenres.tags).toEqual(['house', 'disco']);
   });
 
-  it('maps the linked show blurb to showDescription, else null', () => {
+  it('maps the linked series blurb to showDescription, else null', () => {
     expect(toAgendaShow(base).showDescription).toBeNull();
-    const withShow = toAgendaShow({ ...base, expand: { show: { description: 'weekly boogie hour' } } });
+    const withShow = toAgendaShow({ ...base, expand: { series: { description: 'weekly boogie hour' } } });
     expect(withShow.showDescription).toBe('weekly boogie hour');
     // empty string collapses to null (falsy) so the UI can fall back cleanly
-    expect(toAgendaShow({ ...base, expand: { show: { description: '' } } }).showDescription).toBeNull();
+    expect(toAgendaShow({ ...base, expand: { series: { description: '' } } }).showDescription).toBeNull();
   });
 
   it('tolerates missing optional fields', () => {
