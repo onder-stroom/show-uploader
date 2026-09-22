@@ -23,6 +23,10 @@ export type VerifyResult =
   //      Answering 401 here is what makes an outage look like a dead session.
   | { ok: false; status: 401 | 403 | 503; code: string };
 
+// Project roles that grant access. Zitadel keeps one grant per user per
+// project, so an admin can't also be handed `member` as a second grant.
+const ACCESS_ROLES = ['member', 'admin'];
+
 const JWKS = createRemoteJWKSet(new URL(`https://${env.ZITADEL_DOMAIN}/oauth/v2/keys`));
 
 /** Whether a failure says something about the token, or only about our backend. */
@@ -50,7 +54,7 @@ export function tokenShape(token: string): string {
 }
 
 /**
- * Verify a bearer token and its member role. `where` names the caller (a method
+ * Verify a bearer token and its member (or admin) role. `where` names the caller (a method
  * and path, a tRPC procedure) and appears in the log line — a rejection has to
  * be attributable, or a loop stays invisible the way this one did.
  */
@@ -65,8 +69,8 @@ export async function verifyToken(token: string, where: string): Promise<VerifyR
     });
 
     const roles = payload['urn:zitadel:iam:org:project:roles'] as Record<string, unknown> | undefined;
-    if (!roles || !('member' in roles)) {
-      console.warn(`Auth: no member role for ${String(payload.sub)} (${where})`);
+    if (!roles || !ACCESS_ROLES.some((role) => role in roles)) {
+      console.warn(`Auth: no member/admin role for ${String(payload.sub)} (${where})`);
       return { ok: false, status: 403, code: 'ERR_NOT_MEMBER' };
     }
 
