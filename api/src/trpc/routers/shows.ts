@@ -24,7 +24,7 @@ import { recordPlatformSync, getPlatformSyncs } from '../../db/queries';
 // endpoints require the same Zitadel JWT + `member` role that requireAuth
 // enforces, so they use protectedProcedure.
 export const showsRouter = router({
-  // GET /api/shows/genres — full genre vocabulary for tag autocomplete
+  // Full genre vocabulary for tag autocomplete
   // (PocketBase is the master list).
   listGenres: protectedProcedure.query(async () => {
     try {
@@ -38,7 +38,7 @@ export const showsRouter = router({
     }
   }),
 
-  // GET /api/shows — the "to process" list (draft archive records).
+  // The "to process" list (draft archive records).
   listShows: protectedProcedure.query(async () => {
     try {
       return await listShows();
@@ -51,7 +51,7 @@ export const showsRouter = router({
     }
   }),
 
-  // GET /api/shows/published — shows already live elsewhere, for the "attach
+  // Shows already live elsewhere, for the "attach
   // a recording" picker. Filtered to ones missing cs-archive-video client-side
   // (see ui/src/pages/Attach.tsx) — this returns every published record.
   listPublished: protectedProcedure.query(async () => {
@@ -81,9 +81,8 @@ export const showsRouter = router({
     }
   }),
 
-  // GET /api/shows/meta?title=&description= — AI-generated upload copy. Never
-  // blocks the form on an AI hiccup: falls back to the show's own copy (the REST
-  // route always returns 200 here, so this resolver never throws).
+  // AI-generated upload copy. Never blocks the form on an AI hiccup: falls back
+  // to the show's own copy, so this resolver never throws.
   generateMeta: protectedProcedure
     .input(
       z
@@ -121,7 +120,7 @@ export const showsRouter = router({
     }
   }),
 
-  // GET /api/shows/:id — a single archive record (any status): the current
+  // A single archive record (any status): the current
   // PocketBase metadata a sync would push.
   get: protectedProcedure.input(z.object({ id: z.string().min(1) })).query(async ({ input }) => {
     try {
@@ -135,7 +134,7 @@ export const showsRouter = router({
     }
   }),
 
-  // POST /api/shows/:id/sync-platforms — re-sync PocketBase metadata/cover to the
+  // Re-sync PocketBase metadata/cover to the
   // selected platforms (PB is the master). `platforms` narrows which (default all).
   syncPlatforms: protectedProcedure
     .input(z.object({ id: z.string().min(1), platforms: z.array(z.enum(['youtube', 'mixcloud'])).optional() }))

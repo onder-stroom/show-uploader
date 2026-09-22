@@ -37,6 +37,7 @@ Read `docs/architecture/video-lifecycle.md` before touching upload/video state.
 |---|---|
 | Auth (REST + tRPC) | `api/src/auth/verify-token.ts` |
 | New API endpoints | tRPC routers in `api/src/trpc/routers/`. REST (`api/src/routes/`) only for what tRPC can't do: multipart upload, raw cover bytes, SSE, presence, `/api/public`, watcher. |
+| Rules behind an endpoint | `api/src/usecases/` (publish, retry, archive actions, metadata edit, preview). Routers only validate input, call a use case and map its `UseCaseError` to a tRPC code. |
 | PocketBase reads/writes | `api/src/services/shows-api.ts` (token cache, retries, genre mapping) |
 | Postgres | `api/src/db/queries.ts` (takes `db` as a parameter) and `worker/src/db.ts` |
 | S3 keys and folders | `@show-uploader/domain` (`storage-layout.ts`, `show-slug.ts`) |
@@ -49,6 +50,12 @@ Read `docs/architecture/video-lifecycle.md` before touching upload/video state.
 | Lists with search + paging | `usePaged` / `Pager` in `ui/src/components/Pager.tsx` (URL-backed; add `pagedSearch` to the route's `validateSearch`) |
 | Formatting (size, duration, hashtags) | `ui/src/format.ts`; platform copy in `@show-uploader/domain` (`format.ts`) |
 | Styling | `ui/src/theme.ts` tokens and component defaults, never per-call-site styles |
+
+**Routers stay thin.** A procedure that does more than one call plus error handling
+gets its logic moved into a `usecases/` function. Use cases import `db`, the queue
+and services directly (same as the rest of the codebase, so `vi.mock` tests work)
+and throw `UseCaseError('NOT_FOUND' | 'CONFLICT' | 'PRECONDITION_FAILED', message)`
+for a refused rule, never a `TRPCError`. See `api/test/usecases/` for the test style.
 
 **Reuse before you write.** Before adding a helper, hook, query, component or job,
 search for an existing one (`grep` the concern, check the table above) and extend it.
