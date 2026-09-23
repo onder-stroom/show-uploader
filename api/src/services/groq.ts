@@ -14,7 +14,7 @@ export async function generateMeta(
   description: string
 ): Promise<GeneratedMeta> {
   const chat = await groq.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
+    model: env.GROQ_MODEL,
     messages: [
       {
         role: 'system',
