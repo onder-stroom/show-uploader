@@ -14,6 +14,10 @@ const schema = z.object({
   SHOWS_API_URL: z.string().url(),
   SHOWS_API_KEY: z.string(),
   GROQ_API_KEY: z.string(),
+  // Providers retire models without notice: llama-3.3-70b-versatile went 404 in
+  // production and every generation silently fell back to the show's own copy.
+  // Overridable so the next retirement is an env change, not a deploy.
+  GROQ_MODEL: z.string().default('openai/gpt-oss-120b'),
   JINGLE_S3_KEY: z.string().optional(),
   // Public base for the permanent recording links written onto agenda records
   // (/api/public/recordings/...). Browsers open these, so this must be the
