@@ -96,11 +96,15 @@ export function useAuthCheck(enabled: boolean) {
   return useQuery({ queryKey: ['auth-me'], queryFn: api.checkAuth, enabled, retry: false });
 }
 
-export function useGeneratedMeta(title: string | undefined, description: string | undefined) {
+export function useGeneratedMeta(
+  title: string | undefined,
+  description: string | undefined,
+  genres: string[] | undefined
+) {
   const trpc = useTRPC();
   return useQuery(
     trpc.shows.generateMeta.queryOptions(
-      { title: title ?? '', description: description ?? '' },
+      { title: title ?? '', description: description ?? '', genres: genres ?? [] },
       { enabled: !!title, retry: false, staleTime: Infinity }
     )
   );
