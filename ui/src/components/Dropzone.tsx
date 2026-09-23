@@ -174,11 +174,23 @@ export function UploadControl({ showId }: { showId: string }) {
 function IndicatorRow({ item, compact }: { item: UploadItem; compact?: boolean }) {
   const { cancel } = useUpload();
   const pct = Math.round(item.fraction * 100);
+  // A grid, not a row of flex items: the bar, the percentage and the speed get
+  // fixed tracks, so every row lines up and the name gets ALL the remaining
+  // width. Laid out as flex, a long filename collapsed to a single letter while
+  // the columns wandered from row to row.
   return (
-    <Stack
-      direction="row"
-      spacing={1}
-      sx={{ alignItems: 'center', width: compact ? 'auto' : '100%', px: compact ? 0 : 0.5, py: compact ? 0 : 0.5 }}
+    <Box
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: compact
+          ? 'minmax(0, 1fr) 60px 34px 62px'
+          : 'minmax(0, 1fr) 60px 34px 62px 32px',
+        alignItems: 'center',
+        columnGap: 1,
+        width: compact ? 'auto' : '100%',
+        px: compact ? 0 : 0.5,
+        py: compact ? 0 : 0.5,
+      }}
     >
       {/* TanStack's Link carries typed route params, which don't survive MUI's
           `component` generic — so it stays a plain Link and the styling hangs
@@ -186,53 +198,41 @@ function IndicatorRow({ item, compact }: { item: UploadItem; compact?: boolean }
       <Box
         sx={{
           minWidth: 0,
-          flex: 1,
-          '& a': { display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, color: c.muted, textDecoration: 'none' },
+          '& a': { display: 'block', color: c.muted, textDecoration: 'none' },
           '& a:hover': { color: c.ink },
         }}
       >
-        <Link to="/upload/$showId" params={{ showId: item.showId }}>
-          <Typography
-            variant="caption"
-            noWrap
-            sx={{ flex: compact ? 'none' : 1, minWidth: 0, maxWidth: compact ? 160 : 'none' }}
-          >
+        <Link to="/upload/$showId" params={{ showId: item.showId }} title={item.filename}>
+          <Typography variant="caption" noWrap sx={{ display: 'block', maxWidth: compact ? 200 : 'none' }}>
             {item.filename}
           </Typography>
-          <LinearProgress
-            variant="determinate"
-            value={pct}
-            sx={{ width: 60, height: 4, flexShrink: 0 }}
-          />
-          <Typography
-            variant="caption"
-            sx={{ flexShrink: 0, width: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
-          >
-            {pct}%
-          </Typography>
-          {item.bytesPerSec > 0 && (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ flexShrink: 0, width: 62, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
-            >
-              {prettyBytes(item.bytesPerSec)}/s
-            </Typography>
-          )}
         </Link>
       </Box>
-      <Tooltip title="cancel upload">
-        <Button
-          variant="text"
-          onClick={() => cancel(item.showId)}
-          aria-label={`cancel upload of ${item.filename}`}
-          color={ROLE.destroy}
-          sx={{ flexShrink: 0, minWidth: 24 }}
-        >
-          ✕
-        </Button>
-      </Tooltip>
-    </Stack>
+      <LinearProgress variant="determinate" value={pct} sx={{ height: 4 }} />
+      <Typography variant="caption" sx={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+        {pct}%
+      </Typography>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
+      >
+        {item.bytesPerSec > 0 ? `${prettyBytes(item.bytesPerSec)}/s` : ''}
+      </Typography>
+      {!compact && (
+        <Tooltip title="cancel upload">
+          <Button
+            variant="text"
+            onClick={() => cancel(item.showId)}
+            aria-label={`cancel upload of ${item.filename}`}
+            color={ROLE.destroy}
+            sx={{ minWidth: 24, px: 0 }}
+          >
+            ✕
+          </Button>
+        </Tooltip>
+      )}
+    </Box>
   );
 }
 
@@ -276,7 +276,7 @@ export function UploadIndicator() {
         onClose={() => setOpen(false)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-        slotProps={{ paper: { variant: 'outlined', sx: { mt: 1, width: 420, p: 1 } } }}
+        slotProps={{ paper: { variant: 'outlined', sx: { mt: 1, width: 'min(560px, calc(100vw - 32px))', p: 1 } } }}
       >
         <Stack spacing={0.25}>
           {active.map((u) => (
