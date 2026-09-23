@@ -182,9 +182,10 @@ function IndicatorRow({ item, compact }: { item: UploadItem; compact?: boolean }
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: compact
-          ? 'minmax(0, 1fr) 60px 34px 62px'
-          : 'minmax(0, 1fr) 60px 34px 62px 32px',
+        // Cancel is in every row, compact included: with one upload running the
+        // header row IS the whole queue, and it is the only way to abort a wrong
+        // file from another page.
+        gridTemplateColumns: 'minmax(0, 1fr) 60px 34px 62px 32px',
         alignItems: 'center',
         columnGap: 1,
         width: compact ? 'auto' : '100%',
@@ -219,19 +220,17 @@ function IndicatorRow({ item, compact }: { item: UploadItem; compact?: boolean }
       >
         {item.bytesPerSec > 0 ? `${prettyBytes(item.bytesPerSec)}/s` : ''}
       </Typography>
-      {!compact && (
-        <Tooltip title="cancel upload">
-          <Button
-            variant="text"
-            onClick={() => cancel(item.showId)}
-            aria-label={`cancel upload of ${item.filename}`}
-            color={ROLE.destroy}
-            sx={{ minWidth: 24, px: 0 }}
-          >
-            ✕
-          </Button>
-        </Tooltip>
-      )}
+      <Tooltip title="cancel upload">
+        <Button
+          variant="text"
+          onClick={() => cancel(item.showId)}
+          aria-label={`cancel upload of ${item.filename}`}
+          color={ROLE.destroy}
+          sx={{ minWidth: 24, px: 0 }}
+        >
+          ✕
+        </Button>
+      </Tooltip>
     </Box>
   );
 }
