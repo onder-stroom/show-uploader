@@ -112,9 +112,24 @@ exec into the running containers. See `scripts/e2e/README.md`.
 - A push to `master` runs `.github/workflows/deploy.yml`, which redeploys the stack
   through the Komodo API and waits for the result. Komodo's own webhook is disabled on
   the stack; the Action is the only automatic path.
-- **Pushing to `master` ships to production.** Don't push without the owner's go-ahead.
 - Never assume a push shipped: compare Komodo's deployed commit to `master`
   (`gh run list -w "Deploy to Komodo"` plus the stack's deployed hash).
+
+### Branching — `master` is production
+
+**A push to `master` deploys, within about a minute. Treat pushing to it as
+pressing the deploy button.**
+
+- Work on a branch: `feat/<thing>`, `fix/<thing>`, `chore/<thing>`. Commit and
+  push there as often as you like — nothing deploys.
+- Open a PR into `master` (`gh pr create`). The Claude review workflow runs on it.
+- Merge only when the change is meant to be live **and** someone is around to
+  watch it: after `pnpm e2e`, the unit tests and a typecheck.
+- Push straight to `master` only when the owner has asked for exactly that
+  change to go out now. If you are unsure whether it should deploy, it shouldn't:
+  branch and open a PR instead.
+- Don't merge a risky change late in the day or right before a show is due to be
+  published — a bad deploy blocks the operator's only publishing route.
 
 ## Auth
 
@@ -149,3 +164,5 @@ can't also be given `member`, which is why admin alone passes. Other project rol
 
 Conventional Commits (`fix(auth): …`). A one-line subject, and a body of a few lines at
 most explaining why. No AI/Claude attribution lines (`Co-Authored-By`, session links).
+
+Commit on a branch, not on `master` — see **Branching** above.
