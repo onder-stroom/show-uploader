@@ -15,7 +15,7 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
  * never touched. Nothing here points at anything real.
  */
 export const env = {
-  DATABASE_URI: 'postgres://e2e:e2e@localhost:15432/e2e',
+  DATABASE_URI: 'postgres://e2e:e2e@localhost:15432/e2e',  // no sslmode: same as the stack's own Postgres
   REDIS_URL: 'redis://localhost:16379',
   S3_ENDPOINT: 'http://localhost:19000',
   S3_ACCESS_KEY: 'e2eaccess',
@@ -51,12 +51,10 @@ export async function stackUp() {
     '-e', `MINIO_ROOT_USER=${env.S3_ACCESS_KEY}`, '-e', `MINIO_ROOT_PASSWORD=${env.S3_SECRET_KEY}`,
     'quay.io/minio/minio', 'server', '/data');
   docker('run', '-d', '--name', 'e2e-redis', '-p', '16379:6379', 'redis:7-alpine');
-  // Both db clients connect with ssl: 'require', so Postgres has to serve TLS.
-  // The image ships a snakeoil cert, which is all a throwaway needs.
+  // Same image and TLS-less setup as the stack's own Postgres, so the checks
+  // exercise the connection the deployed app actually makes.
   docker('run', '-d', '--name', 'e2e-pg', '-p', '15432:5432',
-    '-e', 'POSTGRES_USER=e2e', '-e', 'POSTGRES_PASSWORD=e2e', '-e', 'POSTGRES_DB=e2e', 'postgres:16',
-    '-c', 'ssl=on', '-c', 'ssl_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem',
-    '-c', 'ssl_key_file=/etc/ssl/private/ssl-cert-snakeoil.key');
+    '-e', 'POSTGRES_USER=e2e', '-e', 'POSTGRES_PASSWORD=e2e', '-e', 'POSTGRES_DB=e2e', 'postgres:17-alpine');
   await waitFor('the local stack', async () => {
     try {
       docker('exec', 'e2e-pg', 'pg_isready', '-U', 'e2e');
@@ -104,7 +102,7 @@ export async function bucket() {
 /** A fresh database with every migration applied. */
 export async function database() {
   const postgres = requireFrom('api')('postgres');
-  const db = postgres(env.DATABASE_URI, { ssl: 'require', max: 2, onnotice: () => {} });
+  const db = postgres(env.DATABASE_URI, { max: 2, onnotice: () => {} });
   const dir = path.join(ROOT, 'api/src/db/migrations');
   for (const file of fs.readdirSync(dir).sort()) {
     await db.unsafe(fs.readFileSync(path.join(dir, file), 'utf8'));

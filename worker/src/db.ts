@@ -1,7 +1,8 @@
 import postgres from 'postgres';
 import { env } from './env';
 
-export const db = postgres(env.DATABASE_URI, { ssl: 'require', max: 5 });
+// TLS comes from the connection string (`?sslmode=`), see api/src/db/client.ts.
+export const db = postgres(env.DATABASE_URI, { max: 5 });
 
 export async function setJobStatus(
   jobId: string,
