@@ -56,7 +56,7 @@ Read `docs/architecture/video-lifecycle.md` before touching upload/video state.
 | New API endpoints | tRPC routers in `api/src/trpc/routers/`. REST (`api/src/routes/`) only for what tRPC can't do: multipart upload, raw cover bytes, SSE, presence, `/api/public`, watcher. |
 | Rules behind an endpoint | `api/src/usecases/` (publish, retry, archive actions, metadata edit, preview). Routers only validate input, call a use case and map its `UseCaseError` to a tRPC code. |
 | PocketBase reads/writes | `api/src/services/shows-api.ts` (token cache, retries, genre mapping) |
-| Postgres | `api/src/db/queries.ts` (takes `db` as a parameter) and `worker/src/db.ts` |
+| Postgres | the stack's own `postgres` service (not Neon since 2026-09-23). Queries in `api/src/db/queries.ts` (takes `db` as a parameter) and `worker/src/db.ts`; TLS comes from `DATABASE_URI`'s `sslmode`, and in-stack needs none. Migrations run on api startup. |
 | S3 keys and folders | `@show-uploader/domain` (`storage-layout.ts`, `show-slug.ts`) |
 | S3 access / signing | `api/src/services/s3.ts`, `worker/src/services/s3.ts`; UI signs through the `storage.signObject` query |
 | ffmpeg / ffprobe | `worker/src/services/ffmpeg.ts` (trim, remux, loudness, `probeDuration`) |

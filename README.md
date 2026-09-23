@@ -23,11 +23,11 @@ Windows PC (OBS)
 Cloud server (Docker Compose)
   ├─ api      (Express, port 3000) — REST + SSE + serves UI
   ├─ worker   (BullMQ) — ffmpeg, YouTube, MixCloud, archive jobs
+  ├─ postgres — the app's database (+ a nightly pg_dump sidecar)
   ├─ redis    — job queue
   └─ minio    — S3-compatible storage (ports 9000, 9001)
 
 External
-  ├─ Neon     — managed Postgres
   ├─ Groq     — AI copy generation
   ├─ YouTube  — OAuth2 upload
   └─ MixCloud — OAuth2 upload
@@ -39,7 +39,6 @@ External
 
 - Docker + Docker Compose (on the cloud server)
 - Node.js 20+ and pnpm (on the Windows machine, for the watcher)
-- A [Neon](https://neon.tech) Postgres database
 - A [Groq](https://console.groq.com) API key (free tier)
 - YouTube Data API v3 credentials
 - MixCloud app credentials
@@ -65,7 +64,8 @@ Edit `.env` — every variable is documented inline. At minimum fill in:
 
 | Variable | Description |
 |---|---|
-| `DATABASE_URI` | Neon connection string |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Create the stack's database on first start |
+| `DATABASE_URI` | How the app reaches it: `postgresql://<user>:<password>@postgres:5432/<db>`. A managed host instead needs `?sslmode=require`. |
 | `SHOWS_API_URL` | Your agenda API base URL |
 | `SHOWS_API_KEY` | Bearer token for the agenda API |
 | `S3_ACCESS_KEY` | Minio root user (min 3 chars) |
@@ -80,19 +80,15 @@ Edit `.env` — every variable is documented inline. At minimum fill in:
 | `UI_USERNAME` | HTTP Basic Auth username for the web UI |
 | `UI_PASSWORD` | HTTP Basic Auth password for the web UI |
 
-### 3. Run database migrations
-
-```bash
-# From the repo root — run once on first deploy, re-run safely after updates
-psql "$DATABASE_URI" -f api/src/db/migrations/001_initial.sql
-psql "$DATABASE_URI" -f api/src/db/migrations/002_pending_videos_and_trim.sql
-```
-
-### 4. Start the stack
+### 3. Start the stack
 
 ```bash
 docker compose up -d
 ```
+
+The database and its schema are created on first start: Postgres initialises from
+`POSTGRES_*`, and the api applies every migration in `api/src/db/migrations/`.
+Backups land nightly in `/mnt/storage/backups/postgres` (14 kept).
 
 On first run `minio-init` creates the bucket and folder structure (`uploads/`, `archive/`, `jingles/`, `images/`) and exits. Check with:
 
@@ -100,7 +96,7 @@ On first run `minio-init` creates the bucket and folder structure (`uploads/`, `
 docker compose logs minio-init
 ```
 
-### 5. Expose the app
+### 4. Expose the app
 
 Put a reverse proxy (Nginx, Caddy, Traefik) in front of port 3000. Example Caddy config:
 
@@ -112,14 +108,16 @@ your-domain.com {
 
 Minio S3 API (port 9000) should also be publicly accessible for the Windows watcher to upload files directly. Keep the Minio console (port 9001) private or firewall it.
 
-### 6. Updating
+### 5. Updating
 
 ```bash
 git pull
 docker compose build
 docker compose up -d
-# run any new migration files
 ```
+
+The api applies any new database migrations itself on startup (`api/src/db/migrations/`,
+tracked in the `schema_migrations` table), so there is nothing to run by hand.
 
 ### Production deploys
 
