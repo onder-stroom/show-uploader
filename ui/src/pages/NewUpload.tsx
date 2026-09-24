@@ -149,10 +149,12 @@ export default function NewUpload() {
   const [autoTrimSilence, setAutoTrimSilence] = useState(true);
 
   const qc = useQueryClient();
-  // Feed the AI both the episode notes and the linked show's blurb as context.
+  // Everything the record actually says: the episode notes, the series blurb and
+  // the curated genres. The model is told to use only these — see groq.ts.
   const meta = useGeneratedMeta(
     selectedShow?.title,
-    [selectedShow?.description, selectedShow?.showDescription].filter(Boolean).join('\n\n')
+    [selectedShow?.description, selectedShow?.showDescription].filter(Boolean).join('\n\n'),
+    selectedShow?.tags ?? undefined
   );
   const pending = usePendingVideos();
   const claim = useClaimPending();

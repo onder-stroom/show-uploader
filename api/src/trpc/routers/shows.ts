@@ -89,6 +89,9 @@ export const showsRouter = router({
         .object({
           title: z.string().optional(),
           description: z.string().optional(),
+          // The record's curated genres: real facts, and the vocabulary the
+          // archive already uses for tags.
+          genres: z.array(z.string()).optional(),
         })
         .optional()
     )
@@ -96,7 +99,7 @@ export const showsRouter = router({
       const title = input?.title ?? '';
       const description = input?.description ?? '';
       try {
-        return await generateMeta(title, description);
+        return await generateMeta(title, description, input?.genres ?? []);
       } catch (err) {
         // Never block the form on an AI hiccup — fall back to the show's own copy.
         console.error('Groq meta generation failed, using fallback:', err);
