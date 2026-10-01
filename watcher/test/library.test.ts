@@ -118,3 +118,60 @@ describe('upload ledger', () => {
     expect(lib.get(s.ref)?.cuts).toHaveLength(1);
   });
 });
+
+describe('hardening', () => {
+  const stateOf = (ref: string) => lib.paths(ref).state;
+
+  it.each([['empty', ''], ['corrupt', '{nope'], ['null', 'null'], ['wrong shape', '{}']])(
+    'cleans up a %s sidecar and re-registers the original on the next sync',
+    (_n, body) => {
+      touch('night.mkv', 60_000);
+      lib.sync(NOW);
+      const [s] = lib.list();
+      fs.writeFileSync(lib.paths(s.ref).master, 'big');
+      fs.writeFileSync(stateOf(s.ref), body);
+      expect(lib.get(s.ref)).toBeNull();
+      lib.sync(NOW + 10_000);
+      lib.sync(NOW + 20_000);
+      expect(fs.existsSync(lib.paths(s.ref).master)).toBe(false);
+      expect(lib.list()).toHaveLength(1);
+      expect(lib.list()[0]).toMatchObject({ filename: 'night.mkv', state: 'preparing' });
+    },
+  );
+
+  it('removes a corrupt sidecar dir even when the original is gone', () => {
+    const p = touch('night.mkv', 60_000);
+    lib.sync(NOW);
+    const [s] = lib.list();
+    fs.writeFileSync(stateOf(s.ref), '{nope');
+    fs.rmSync(p);
+    lib.sync(NOW + 10_000);
+    expect(fs.existsSync(lib.paths(s.ref).dir)).toBe(false);
+  });
+
+  it('a touched file yields one sidecar and the old ref dir is gone', () => {
+    const p = touch('night.mkv', 60_000);
+    lib.sync(NOW);
+    const [old] = lib.list();
+    fs.writeFileSync(lib.paths(old.ref).master, 'stale');
+    touch('night.mkv', 30_000, 'longer content');
+    lib.sync(NOW + 10_000);
+    const list = lib.list();
+    expect(list).toHaveLength(1);
+    expect(list[0].ref).not.toBe(old.ref);
+    expect(list[0].originalPath).toBe(p);
+    expect(fs.existsSync(lib.paths(old.ref).dir)).toBe(false);
+  });
+
+  it.each(['..', '../x', '', 'zzzz'])('rejects invalid ref %j without touching disk', (ref) => {
+    touch('night.mkv', 60_000);
+    lib.sync(NOW);
+    expect(() => lib.paths(ref)).toThrow();
+    expect(lib.get(ref)).toBeNull();
+    expect(lib.sourceFor(ref)).toBeNull();
+    expect(() => lib.recordUpload(ref, 'c', NOW)).not.toThrow();
+    expect(() => lib.remove(ref)).not.toThrow();
+    expect(fs.existsSync(path.join(root, '.show-uploader'))).toBe(true);
+    expect(lib.list()).toHaveLength(1);
+  });
+});

@@ -11,6 +11,8 @@ import type { RecordingState } from '@show-uploader/domain';
  */
 
 const VIDEO_EXT = new Set(['.mkv', '.mp4']);
+/** Exactly what recordingRef produces; anything else must never reach the filesystem. */
+const REF_RE = /^[0-9a-f]{16}$/;
 
 export type Original = {
   ref: string;
@@ -59,6 +61,7 @@ export class Library {
   constructor(private readonly o: { recordingsDir: string; workDir: string; stableWindowMs: number }) {}
 
   paths(ref: string): WorkPaths {
+    if (!REF_RE.test(ref)) throw new Error(`invalid recording ref: ${JSON.stringify(ref)}`);
     const dir = path.join(this.o.workDir, 'recordings', ref);
     return {
       dir,
@@ -72,10 +75,21 @@ export class Library {
   /** Scan the folder, register new stable files, forget recordings with nothing left on disk. */
   sync(nowMs: number): { recordingActive: boolean } {
     const { ready, growing } = this.scan(nowMs);
+
+    // A ref directory without a readable sidecar is garbage: derived files are disposable.
+    // If the original still exists, it is re-registered and re-prepared.
+    for (const ref of this.refDirs()) {
+      if (!this.get(ref)) this.remove(ref);
+    }
+
     const known = new Set(this.list().map((s) => s.ref));
 
     for (const o of ready) {
       if (known.has(o.ref)) continue;
+      // Same file, new size/mtime: the content changed, so the old derived files are stale.
+      for (const old of this.list()) {
+        if (old.originalPath === o.path && old.ref !== o.ref) this.remove(old.ref);
+      }
       this.save({
         ref: o.ref,
         filename: o.filename,
@@ -100,16 +114,18 @@ export class Library {
     return { recordingActive: growing.length > 0 };
   }
 
-  list(): Sidecar[] {
-    const root = path.join(this.o.workDir, 'recordings');
-    let refs: string[];
+  /** Ref-named directories under the work folder, valid sidecar or not. */
+  private refDirs(): string[] {
     try {
-      refs = fs.readdirSync(root);
+      return fs.readdirSync(path.join(this.o.workDir, 'recordings')).filter((n) => REF_RE.test(n));
     } catch {
       return [];
     }
+  }
+
+  list(): Sidecar[] {
     const out: Sidecar[] = [];
-    for (const ref of refs) {
+    for (const ref of this.refDirs()) {
       const s = this.get(ref);
       if (s) out.push(s);
     }
@@ -117,8 +133,12 @@ export class Library {
   }
 
   get(ref: string): Sidecar | null {
+    if (!REF_RE.test(ref)) return null;
     try {
-      return JSON.parse(fs.readFileSync(this.paths(ref).state, 'utf8')) as Sidecar;
+      const s = JSON.parse(fs.readFileSync(this.paths(ref).state, 'utf8'));
+      const ok =
+        s && typeof s === 'object' && typeof s.ref === 'string' && typeof s.originalPath === 'string' && Array.isArray(s.cuts);
+      return ok ? (s as Sidecar) : null;
     } catch {
       return null;
     }
@@ -149,6 +169,7 @@ export class Library {
   }
 
   remove(ref: string): void {
+    if (!REF_RE.test(ref)) return;
     fs.rmSync(this.paths(ref).dir, { recursive: true, force: true });
   }
 
