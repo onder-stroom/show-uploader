@@ -7,26 +7,30 @@ S3. It never talks to the api itself: the uploader's worker drives it over Tails
 
 ## Install
 
-1. Node 20 and `ffmpeg.exe` + `ffprobe.exe` (a full build with libx264) in `C:\show-uploader\tools`.
-2. On the PC, in a checkout of this repo: `pnpm install`, `pnpm --filter @show-uploader/watcher build`, then
-   `pnpm --filter @show-uploader/watcher deploy --legacy --prod C:\show-uploader\watcher`.
-   Do not copy `watcher/` by hand: its `node_modules` holds links (the workspace's
-   `@show-uploader/domain` and the `.pnpm` store) that a plain copy breaks. `deploy` writes a
-   self-contained folder (`dist/`, `package.json`, real `node_modules` with `domain` included)
-   and needs an empty target. `--legacy` is required on pnpm 10 (otherwise it refuses with
-   `ERR_PNPM_DEPLOY_NONINJECTED_WORKSPACE`). Run it on the PC: the links it makes do not survive
-   being zipped or copied across machines. Verified on macOS with pnpm 10.28: the deployed
-   `node dist/index.js` started on its own and answered `/v1/health`.
-3. Copy `.env.example` to `.env` and fill it in. Set `LISTEN_HOST` to the PC's Tailscale IP.
-4. Install the service with WinSW (`service/show-uploader-recordings.xml`): `show-uploader-recordings.exe install`, then `start`.
-5. In the Tailscale admin, allow only the uploader host to reach port 8787 on this machine.
+The PC needs only Node 20+ (24 is fine), `ffmpeg.exe` + `ffprobe.exe` (with libx264) and one file. Build that
+file on your dev machine; no git, pnpm or build is needed on the PC.
+
+1. On the dev machine: `pnpm install`, then `pnpm --filter @show-uploader/watcher bundle`. This writes
+   `watcher/dist/recordings-service.js`: the whole service in one self-contained file (it is plain JavaScript
+   with no native modules, so a file built on macOS runs on Windows).
+2. Copy that one file to the PC into `C:\show-uploader\recordings\`.
+3. In that folder create `.env` (start from `watcher/.env.example`). Set `RECORDINGS_DIR` to OBS's recording
+   path, `AGENT_TOKEN` to a long random secret, `LISTEN_HOST` to the PC's Tailscale IP (`tailscale ip -4`), and
+   `FFMPEG_PATH` / `FFPROBE_PATH` to the full paths of the executables (a service does not see a per-user PATH).
+4. Test it in a PowerShell window first: `cd C:\show-uploader\recordings; node recordings-service.js`, then from
+   another machine on the tailnet `curl -H "Authorization: Bearer <token>" http://<tailscale-ip>:8787/v1/health`.
+   If it does not answer, allow the port for Tailscale addresses only (admin PowerShell):
+   `New-NetFirewallRule -DisplayName "Show Uploader Recordings" -Direction Inbound -Protocol TCP -LocalPort 8787 -RemoteAddress 100.64.0.0/10 -Action Allow`.
+5. To keep it running across logouts and reboots, install it as a Windows service with WinSW: put
+   `WinSW-x64.exe` in `C:\show-uploader\service\` renamed to `show-uploader-recordings.exe`, copy
+   `service/show-uploader-recordings.xml` next to it (check the `node.exe` path with `(Get-Command node).Source`),
+   then in an admin PowerShell: `.\show-uploader-recordings.exe install`, then `.\show-uploader-recordings.exe start`.
+6. In the Tailscale admin, allow only the uploader host to reach port 8787 on this machine.
 
 ## Operate
 
 - Logs: next to the WinSW exe. Status: the uploader's Recordings page.
-- Updating: stop the service, rename `C:\show-uploader\watcher` to `watcher.old`, build and `deploy`
-  into a fresh `C:\show-uploader\watcher` (step 2; the target must be empty), copy `.env` over from
-  `watcher.old`, start the service, then delete `watcher.old`.
+- Updating: build a new bundle (step 1), stop the service, replace `recordings-service.js` (keep `.env`), start the service.
 - Deleting recordings by hand is fine at any time. The service forgets a recording once
   neither its MKV nor its MP4 master is left.
 - While OBS is recording (`recordingActive`), cuts and part uploads pause and resume when it
