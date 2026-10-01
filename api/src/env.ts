@@ -19,6 +19,10 @@ const schema = z.object({
   // Overridable so the next retirement is an env change, not a deploy.
   GROQ_MODEL: z.string().default('openai/gpt-oss-120b'),
   JINGLE_S3_KEY: z.string().optional(),
+  // The recordings service on the OBS PC, reached over Tailscale. Both unset means the
+  // feature is off: the Recordings page shows "OBS PC not reachable".
+  RECORDINGS_AGENT_URL: z.string().url().optional(),
+  RECORDINGS_AGENT_TOKEN: z.string().min(16).optional(),
   // Public base for the permanent recording links written onto agenda records
   // (/api/public/recordings/...). Browsers open these, so this must be the
   // externally reachable host, not a docker alias. Mirrors worker's own copy —

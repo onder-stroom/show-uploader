@@ -1,3 +1,4 @@
+import { RECORDING_CUTS_QUEUE, type CutJobPayload } from '@show-uploader/domain';
 import { Queue, type ConnectionOptions } from 'bullmq';
 import IORedis from 'ioredis';
 import { env } from '../env';
@@ -43,6 +44,18 @@ export const previewQueue = new Queue<PreviewJobPayload>(PREVIEW_QUEUE_NAME, {
     attempts: 1,
     removeOnComplete: { count: 50 },
     removeOnFail: { count: 50 },
+  },
+});
+
+// The worker's cut-recording lane. Three attempts with a long backoff: a failure is
+// usually the PC being briefly offline, and a retry resumes the upload where it stopped.
+export const recordingCutQueue = new Queue<CutJobPayload>(RECORDING_CUTS_QUEUE, {
+  connection: redis,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 30_000 },
+    removeOnComplete: { count: 100 },
+    removeOnFail: { count: 100 },
   },
 });
 

@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import type { AgentRecording } from '@show-uploader/domain';
 import type { PlatformJob } from '../src/db/queries';
 import type { ApiDeps, UploadSession, UploadWithJobs } from '../src/ports';
 import type { AgendaShow } from '../src/services/shows-api';
@@ -15,6 +16,8 @@ export function fakeDeps(opts: {
   folders?: Record<string, string>;
   live?: { isLive: boolean; resumeAt: Date | null };
   jingleS3Key?: string | null;
+  recordings?: AgentRecording[] | null;
+  recordingsSecret?: string | null;
 } = {}) {
   const uploads = new Map((opts.uploads ?? []).map((u) => [u.id, u]));
   const shows = new Map((opts.shows ?? []).map((s) => [s.id!, s as AgendaShow]));
@@ -114,8 +117,17 @@ export function fakeDeps(opts: {
       syncYoutube: vi.fn(async () => null),
       syncMixcloud: vi.fn(async () => null),
     },
+    recordings: {
+      list: vi.fn(async () => (opts.recordings === undefined ? [] : opts.recordings)),
+      peaks: vi.fn(async (_ref: string) => [0.1] as number[] | null),
+      preview: vi.fn(async (_ref: string, _range: string | undefined, _signal?: AbortSignal) => null as Response | null),
+    },
+    cuts: {
+      enqueue: vi.fn(async (payload: unknown) => void queued.push({ kind: 'cut', payload })),
+      job: vi.fn(async (_cutId: string) => null as import('../src/ports').CutJobView),
+    },
     presence: { broadcastClaims: vi.fn() },
-    config: { jingleS3Key: opts.jingleS3Key ?? null },
+    config: { jingleS3Key: opts.jingleS3Key ?? null, recordingsSecret: opts.recordingsSecret === undefined ? 's'.repeat(24) : opts.recordingsSecret },
   } satisfies ApiDeps;
 
   return { ...deps, rows: uploads, queued, sessionRows, staged };

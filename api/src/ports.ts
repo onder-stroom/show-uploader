@@ -11,8 +11,10 @@
  * HTTP into calls. Simple reads there still call services directly; anything
  * with a rule in it goes through a use case and these ports.
  */
+import type { CutJobPayload, CutStep } from '@show-uploader/domain';
 import type { PlatformJob, ShowUpload } from './db/queries';
 import type { JobPayload } from './queue';
+import type { RecordingsAgent } from './services/recordings-agent';
 import type { AgendaShow, ArchivePatch } from './services/shows-api';
 import type { PreviewJobView } from './services/video-preview';
 
@@ -133,9 +135,28 @@ export interface Presence {
   broadcastClaims(): void;
 }
 
+export type { RecordingsAgent };
+
+/** The queue view of one cut. */
+export type CutJobView = {
+  status: 'waiting' | 'active' | 'delayed' | 'completed' | 'failed' | 'paused' | 'unknown';
+  step: CutStep | null;
+  failedReason: string | null;
+} | null;
+
+/** The queue the worker's cut-recording job runs from. */
+export interface CutQueue {
+  /** Idempotent per cutId: enqueueing a cut that is waiting or running changes nothing. */
+  enqueue(payload: CutJobPayload): Promise<void>;
+  /** The cut's job state, or null when there is none. */
+  job(cutId: string): Promise<CutJobView>;
+}
+
 export type ApiConfig = {
   /** The jingle prepended on MixCloud, if one is configured. */
   jingleS3Key: string | null;
+  /** Signs preview paths; the agent token. */
+  recordingsSecret: string | null;
 };
 
 export type ApiDeps = {
@@ -146,5 +167,7 @@ export type ApiDeps = {
   queue: JobQueue;
   platforms: PlatformMetadata;
   presence: Presence;
+  recordings: RecordingsAgent;
+  cuts: CutQueue;
   config: ApiConfig;
 };
