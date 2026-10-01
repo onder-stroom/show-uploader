@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agendaSlot, formatTimecode, parseTimecode } from '../../src/upload/segments';
+import { agendaSlot, formatTimecode, newSegmentAt, parseTimecode } from '../../src/upload/segments';
 
 describe('timecodes', () => {
   it('formats with tenths, hours only when needed', () => {
@@ -37,5 +37,20 @@ describe('agendaSlot', () => {
 
   it('gives null for times it cannot read, so a bad agenda entry is simply not suggested', () => {
     expect(agendaSlot({ id: 's', date: '', startTime: '', endTime: '' })).toBeNull();
+  });
+});
+
+describe('newSegmentAt', () => {
+  it('is 30 minutes from the playhead', () => {
+    expect(newSegmentAt(100, 7200, [])).toEqual({ startS: 100, endS: 1900 });
+  });
+  it('stops at the next segment and at the end of the recording', () => {
+    expect(newSegmentAt(100, 7200, [{ startS: 1000, endS: 2000 }])).toEqual({ startS: 100, endS: 1000 });
+    expect(newSegmentAt(7000, 7200, [])).toEqual({ startS: 7000, endS: 7200 });
+  });
+  it('does nothing without room', () => {
+    expect(newSegmentAt(1500, 7200, [{ startS: 1000, endS: 2000 }])).toBeNull();
+    expect(newSegmentAt(100, 7200, [{ startS: 110, endS: 500 }])).toBeNull();
+    expect(newSegmentAt(7190, 7200, [])).toBeNull();
   });
 });

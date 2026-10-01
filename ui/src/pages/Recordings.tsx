@@ -1,7 +1,8 @@
 // ui/src/pages/Recordings.tsx
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import IconButton from '@mui/material/IconButton';
 import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
 import Stack from '@mui/material/Stack';
@@ -15,11 +16,17 @@ import {
 import { humanDuration } from '../format';
 import { c } from '../theme';
 import { PageLoading } from '../components/Skeleton';
-import SegmentTimeline from '../components/SegmentTimeline';
+import { TrimBar, ZOOM_LEVELS } from '../components/TrimBar';
+import { toWaveform } from '../components/WaveformPath';
 import { resolveSegment, type CutStatusView, type SegmentStatus } from '../upload/resolveSegment';
-import { agendaSlot, formatTimecode, parseTimecode, type Draft } from '../upload/segments';
+import { agendaSlot, formatTimecode, newSegmentAt, parseTimecode, type Draft } from '../upload/segments';
 
 // The PC's clock is Brussels, and so is everyone reading this page.
+// A cut in these states is being made from the times as they were: editing them now would
+// leave the row showing times the cut does not have.
+const ACTIVE_STATES: readonly string[] = ['queued', 'cutting', 'uploading', 'finishing'];
+const isActive = (cut: CutStatusView | undefined) => !!cut && ACTIVE_STATES.includes(cut.state);
+
 const brussels = new Intl.DateTimeFormat('nl-BE', { timeZone: 'Europe/Brussels', dateStyle: 'medium', timeStyle: 'short' });
 
 export default function Recordings() {
@@ -103,26 +110,58 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
   const [playhead, setPlayhead] = useState(0);
   const [cutByShow, setCutByShow] = useState<Record<string, string>>({});
   const statuses = useCutStatuses(Object.values(cutByShow));
-  // The <video> as state, so the waveform can attach once the element exists.
-  const [media, setMedia] = useState<HTMLVideoElement | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [zoomIndex, setZoomIndex] = useState(0);
+  const video = useRef<HTMLVideoElement>(null);
   const nextId = useRef(1);
   const newId = () => String(nextId.current++);
 
   // The server computes the real % from S3 (ListParts), so every machine shows the same number.
   const fractionFor = (showId: string | null): number | null => {
+    if (showId === null) return null;
     const pct = uploading.data?.find((u) => u.show_id === showId)?.pct;
     return typeof pct === 'number' ? pct / 100 : null;
   };
 
+  const cutFor = (s: Draft) => {
+    const cutId = s.showId ? cutByShow[s.showId] : undefined;
+    return statuses.data?.find((x) => x.cutId === cutId);
+  };
+  const anyActive = segments.some((s) => isActive(cutFor(s)));
   const problems = validateSegments(segments, durationS);
-  const canCut = segments.length > 0 && segments.every((s) => s.showId) && problems.length === 0 && !startCuts.isPending;
+  const canCut = segments.length > 0 && segments.every((s) => s.showId) && problems.length === 0 && !startCuts.isPending && !anyActive;
+
+  const selected = segments.find((s) => s.id === selectedId) ?? null;
+  const waveform = useMemo(() => (peaks.data ? toWaveform(peaks.data) : null), [peaks.data]);
+  const seek = (seconds: number) => {
+    if (video.current) video.current.currentTime = seconds;
+    setPlayhead(seconds);
+  };
 
   const patch = (id: string, change: Partial<Draft>) => setSegments((all) => all.map((s) => (s.id === id ? { ...s, ...change } : s)));
 
   // Agenda times are DRAFT markers: they fill in a first guess the operator then corrects.
   const suggest = () => {
     const slots = (shows.data ?? []).map(agendaSlot).filter((s): s is NonNullable<typeof s> => s !== null);
-    setSegments(suggestSegments(recording.recordedAtMs, durationS, slots).map((s) => ({ ...s, id: newId() })));
+    const next = suggestSegments(recording.recordedAtMs, durationS, slots).map((s) => ({ ...s, id: newId() }));
+    setSegments(next);
+    setSelectedId(next[0]?.id ?? null);
+  };
+
+  const add = () => {
+    const seg = newSegmentAt(playhead, durationS, segments);
+    if (!seg) return;
+    const draft = { ...seg, id: newId(), showId: null };
+    setSegments((all) => [...all, draft].sort((a, b) => a.startS - b.startS));
+    setSelectedId(draft.id);
+  };
+
+  // Removing the selected segment selects its neighbour (the next one, else the previous).
+  const remove = (id: string) => {
+    const i = segments.findIndex((x) => x.id === id);
+    const rest = segments.filter((x) => x.id !== id);
+    setSegments(rest);
+    if (id === selectedId) setSelectedId(rest[Math.min(i, rest.length - 1)]?.id ?? null);
   };
 
   const submit = () =>
@@ -133,46 +172,71 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
 
   return (
     <Stack spacing={2.5}>
-      <Stack direction="row" spacing={2} sx={{ alignItems: 'baseline' }}>
-        <Button size="small" onClick={onClose}>← recordings</Button>
-        <Typography sx={{ fontWeight: 600 }} noWrap>{recording.filename}</Typography>
-        <Typography variant="caption" color="text.secondary">{humanDuration(durationS)}</Typography>
+      <Stack direction="row" spacing={2} sx={{ alignItems: 'baseline', minWidth: 0 }}>
+        <Button size="small" onClick={onClose} sx={{ flexShrink: 0 }}>← recordings</Button>
+        <Typography sx={{ fontWeight: 600, minWidth: 0 }} noWrap>{recording.filename}</Typography>
+        <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>{humanDuration(durationS)}</Typography>
       </Stack>
 
       {preview.data ? (
         <Box
-          component="video" ref={setMedia} src={preview.data.path} controls preload="metadata" playsInline
+          component="video" ref={video} src={preview.data.path} controls preload="metadata" playsInline
           onTimeUpdate={(e: React.SyntheticEvent<HTMLVideoElement>) => setPlayhead(e.currentTarget.currentTime)}
-          sx={{ width: '100%', maxHeight: '45vh', backgroundColor: '#000', display: 'block' }}
+          sx={{ width: '100%', maxWidth: '100%', maxHeight: '45vh', backgroundColor: '#000', display: 'block' }}
         />
       ) : (
         <Typography variant="caption" color="text.disabled">
-          {preview.isError ? `could not open the preview: ${preview.error.message}` : 'loading the preview…'}
+          {!recording.hasPreview
+            ? 'no preview available for this recording.'
+            : preview.isError ? `could not open the preview: ${preview.error.message}` : 'loading the preview…'}
         </Typography>
       )}
 
-      <SegmentTimeline media={media} peaks={peaks.data} durationS={durationS} segments={segments} onChange={setSegments} />
-      <Typography variant="caption" color="text.disabled">
-        drag on the waveform to add a segment · drag a segment or its edges to adjust · click to seek. agenda times are only a first guess.
-      </Typography>
+      <Stack spacing={1} sx={{ minWidth: 0 }}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <Typography variant="caption" color="text.secondary">zoom</Typography>
+          <IconButton size="small" aria-label="zoom out" disabled={zoomIndex === 0} onClick={() => setZoomIndex((i) => Math.max(0, i - 1))}>−</IconButton>
+          <Typography variant="caption" sx={{ minWidth: 32, textAlign: 'center' }}>{ZOOM_LEVELS[zoomIndex]}x</Typography>
+          <IconButton size="small" aria-label="zoom in" disabled={zoomIndex === ZOOM_LEVELS.length - 1} onClick={() => setZoomIndex((i) => Math.min(ZOOM_LEVELS.length - 1, i + 1))}>+</IconButton>
+          {peaks.isPending && <Typography variant="caption" color="text.disabled">loading the waveform…</Typography>}
+          {peaks.isError && <Typography variant="caption" color="text.disabled">no waveform available, the timeline still works.</Typography>}
+        </Stack>
+        <TrimBar
+          duration={durationS}
+          start={selected?.startS ?? null}
+          end={selected?.endS ?? null}
+          currentTime={playhead}
+          zoom={ZOOM_LEVELS[zoomIndex]}
+          onChange={(startS, endS) => selected && patch(selected.id, { startS, endS })}
+          onScrub={seek}
+          waveform={waveform}
+          others={segments.filter((s) => s.id !== selectedId).map((s) => ({ start: s.startS, end: s.endS }))}
+          disabled={selected ? isActive(cutFor(selected)) : false}
+        />
+        <Typography variant="caption" color="text.disabled">
+          select a segment, then drag its edges or the block on the timeline. click or drag the timeline to seek. agenda times are only a first guess.
+        </Typography>
+      </Stack>
 
       <Stack direction="row" spacing={1}>
-        <Button size="small" variant="outlined" onClick={suggest} disabled={!shows.data}>suggest from agenda</Button>
+        <Button size="small" variant="outlined" onClick={suggest} disabled={!shows.data || anyActive}>suggest from agenda</Button>
+        <Button size="small" variant="outlined" onClick={add} disabled={anyActive || newSegmentAt(playhead, durationS, segments) === null}>add segment</Button>
       </Stack>
 
       <Stack spacing={1}>
         {segments.map((s, i) => {
-          const cutId = s.showId ? cutByShow[s.showId] : undefined;
           const expected = cutFilename(recording.filename, s.startS, s.endS);
           return (
             <SegmentRow
               key={s.id} index={i} draft={s} playhead={playhead} expectedFilename={expected}
-              cut={statuses.data?.find((x) => x.cutId === cutId) as CutStatusView | undefined}
+              cut={cutFor(s)}
+              selected={s.id === selectedId}
+              onSelect={() => setSelectedId(s.id)}
               uploadFraction={fractionFor(s.showId)}
               showOptions={(shows.data ?? []).map((x) => ({ id: x.id, title: x.title, taken: segments.some((o) => o.id !== s.id && o.showId === x.id) }))}
               problem={problems.find((p) => p.index === i)?.message}
               onChange={(change) => patch(s.id, change)}
-              onRemove={() => setSegments((all) => all.filter((x) => x.id !== s.id))}
+              onRemove={() => remove(s.id)}
             />
           );
         })}
@@ -190,7 +254,7 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
 
 function SegmentRow(props: {
   index: number; draft: Draft; playhead: number; expectedFilename: string;
-  cut: CutStatusView | undefined; uploadFraction: number | null;
+  cut: CutStatusView | undefined; selected: boolean; onSelect(): void; uploadFraction: number | null;
   showOptions: { id: string; title: string; taken: boolean }[];
   problem: string | undefined;
   onChange(change: Partial<Draft>): void; onRemove(): void;
@@ -200,16 +264,23 @@ function SegmentRow(props: {
   const staged = useStaged(draft.showId ?? undefined).data;
   const matching = staged && staged.filename === props.expectedFilename ? staged : null;
   const status = resolveSegment({ cut, staged: matching, uploadFraction: props.uploadFraction });
+  const locked = isActive(cut);
   const replaces = staged && !matching && status.state === 'draft';
 
   return (
-    <Stack spacing={0.5} sx={{ p: 1.5, backgroundColor: c.surface, border: `1px solid ${props.problem ? c.danger : c.border}` }}>
+    <Stack
+      spacing={0.5} onClick={props.onSelect}
+      sx={{
+        p: 1.5, cursor: 'pointer', backgroundColor: props.selected ? c.linkSoft : c.surface,
+        border: `1px solid ${props.problem ? c.danger : props.selected ? c.link : c.border}`,
+      }}
+    >
       <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
         <Typography sx={{ width: 20, fontWeight: 700 }}>{index + 1}</Typography>
-        <TimeField label="in" value={draft.startS} onCommit={(s) => props.onChange({ startS: s })} />
-        <Button size="small" onClick={() => props.onChange({ startS: props.playhead })}>← playhead</Button>
-        <TimeField label="out" value={draft.endS} onCommit={(s) => props.onChange({ endS: s })} />
-        <Button size="small" onClick={() => props.onChange({ endS: props.playhead })}>← playhead</Button>
+        <TimeField label="in" disabled={locked} value={draft.startS} onCommit={(s) => props.onChange({ startS: s })} />
+        <Button size="small" disabled={locked} onClick={() => props.onChange({ startS: props.playhead })}>← playhead</Button>
+        <TimeField label="out" disabled={locked} value={draft.endS} onCommit={(s) => props.onChange({ endS: s })} />
+        <Button size="small" disabled={locked} onClick={() => props.onChange({ endS: props.playhead })}>← playhead</Button>
         <Select
           size="small" displayEmpty value={draft.showId ?? ''} sx={{ minWidth: 220, flex: 1 }}
           onChange={(e) => props.onChange({ showId: e.target.value || null })}
@@ -248,14 +319,16 @@ function statusLabel(s: SegmentStatus): string {
   }
 }
 
-function TimeField({ label, value, onCommit }: { label: string; value: number; onCommit(s: number): void }) {
+function TimeField({ label, value, disabled, onCommit }: { label: string; value: number; disabled: boolean; onCommit(s: number): void }) {
   const [text, setText] = useState(formatTimecode(value));
   useEffect(() => setText(formatTimecode(value)), [value]);
   return (
     <TextField
-      size="small" label={label} value={text} sx={{ width: 130 }}
+      size="small" label={label} value={text} disabled={disabled} sx={{ width: 130 }}
       onChange={(e) => setText(e.target.value)}
       onBlur={() => {
+        // Untouched text must not re-commit: a value set by dragging would be rounded to the displayed 0.1s.
+        if (text === formatTimecode(value)) return;
         const s = parseTimecode(text);
         if (s === null) setText(formatTimecode(value));
         else onCommit(s);

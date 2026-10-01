@@ -168,7 +168,7 @@ function resolve(proc: string, input: unknown): unknown {
       return { reachable: true, recordings };
     case 'recordings.peaks':
       // A plausible set: quiet gaps between louder stretches, one value per second.
-      return Array.from({ length: 14_400 }, (_, i) => Math.round((0.15 + 0.6 * Math.abs(Math.sin(i / 400)) * Math.random()) * 1000) / 1000);
+      return Array.from({ length: 14_400 }, (_, i) => Math.round((0.15 + 0.6 * Math.abs(Math.sin(i / 400)) * Math.abs(Math.sin(i * 12.9898))) * 1000) / 1000);
     case 'recordings.signPreview':
       return { path: mockSignedUrl() };
     case 'recordings.startCuts': {

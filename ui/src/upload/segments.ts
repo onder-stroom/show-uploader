@@ -1,9 +1,6 @@
-import type { AgendaSlot, Segment } from '@domain/recording-segments';
+import { MIN_SEGMENT_SECONDS, type AgendaSlot, type Segment } from '@domain/recording-segments';
 
-/**
- * The editor's working copy of a segment. Dragging and resizing on the waveform is
- * wavesurfer's Regions plugin; the server re-validates everything with the domain rules.
- */
+/** The editor's working copy of a segment. The server re-validates everything with the domain rules. */
 export type Draft = Segment & { id: string; showId: string | null };
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -41,4 +38,18 @@ export function agendaSlot(show: { id: string; date: string; startTime: string; 
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
   if (endMs <= startMs) endMs += 24 * 3600_000;
   return { showId: show.id, startMs, endMs };
+}
+
+const NEW_SEGMENT_SECONDS = 30 * 60;
+
+/**
+ * A new segment from the playhead: 30 minutes, cut short by the next segment or the end of
+ * the recording. Null when it would start inside another segment or leave under the minimum.
+ */
+export function newSegmentAt(playhead: number, durationS: number, others: Segment[]): Segment | null {
+  const startS = round1(Math.max(0, playhead));
+  if (others.some((o) => o.startS <= startS && startS < o.endS)) return null;
+  const limit = Math.min(durationS, ...others.filter((o) => o.startS >= startS).map((o) => o.startS));
+  const endS = round1(Math.min(startS + NEW_SEGMENT_SECONDS, limit));
+  return endS - startS >= MIN_SEGMENT_SECONDS ? { startS, endS } : null;
 }
