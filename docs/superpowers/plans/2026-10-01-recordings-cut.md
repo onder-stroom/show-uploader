@@ -58,12 +58,12 @@
 - `scripts/e2e/recordings.mjs` — end-to-end on the real built service, api and worker.
 - `api/src/usecases/recording-cuts.ts` — `listRecordings`, `startCuts`, `openCutSession`.
 - `api/src/services/recordings-agent.ts` — HTTP adapter to the PC.
-- `api/src/services/preview-signature.ts` — sign/verify preview paths.
+- `api/src/services/preview-signature.ts` — sign/verify preview tokens (a thin wrapper over `jose`).
 - `api/src/trpc/routers/recordings.ts` — tRPC router.
 - `api/src/routes/recordings.ts` — preview proxy + internal worker endpoints.
 - `worker/src/jobs/cut-recording.ts` — the orchestration job.
 - `worker/src/services/recordings-agent.ts`, `worker/src/services/upload-sessions.ts` — adapters.
-- `ui/src/upload/resolveSegment.ts` (+ test), `ui/src/pages/Recordings.tsx`, `ui/src/components/RecordingTimeline.tsx`.
+- `ui/src/upload/resolveSegment.ts` (+ test), `ui/src/pages/Recordings.tsx`, `ui/src/components/SegmentTimeline.tsx`.
 - `docs/architecture/recordings-cut.md`.
 
 **Modified**
@@ -102,8 +102,9 @@ Replace the bullet starting `- **REST** (streaming, which tRPC cannot do)` with:
 ```markdown
 - **REST** (streaming, which tRPC cannot do): `GET /api/recordings/preview/:ref` proxies
   the agent's preview with Range support. A `<video>` element cannot send an
-  `Authorization` header, so the route is authenticated by a short-lived HMAC signature
-  in the query (`exp`, `sig`), not by `requireAuth`. The signature is issued by the tRPC
+  `Authorization` header, so the route is authenticated by a short-lived signed token
+  (a JWT signed with `jose`, already an api dependency) in the query (`t`), not by `requireAuth`.
+  The token is issued by the tRPC
   query `recordings.signPreview({ref})`, keyed by recording like `storage.signObject`, so
   it is fetched once per viewing session and the `<video src>` never swaps. Waveform peaks
   are a plain tRPC query, `recordings.peaks({ref})`.
@@ -3384,43 +3385,43 @@ Completion (S3 object + staged video) is one copy the worker can reuse."
 - Produces:
   - `createRecordingsAgent(o: { baseUrl?: string; token?: string; timeoutMs?: number }): RecordingsAgent` where
     `interface RecordingsAgent { list(): Promise<AgentRecording[] | null>; peaks(ref: string): Promise<number[] | null>; preview(ref: string, range: string | undefined, signal?: AbortSignal): Promise<Response | null> }` (the interface is added to `ports.ts` in Task 12; this file declares it structurally and Task 12 re-points the import)
-  - `PREVIEW_TTL_MS = 6 * 60 * 60 * 1000`
-  - `signPreview(ref: string, secret: string, nowMs: number): { exp: number; sig: string }`
-  - `verifyPreview(ref: string, exp: number, sig: string, secret: string, nowMs: number): boolean`
+  - `PREVIEW_TTL_S = 6 * 60 * 60`
+  - `signPreview(ref: string, secret: string, nowMs: number): Promise<string>` — an HS256 JWT (via `jose`) carrying `ref`, expiring `PREVIEW_TTL_S` after `nowMs`
+  - `verifyPreview(token: string, ref: string, secret: string, nowMs: number): Promise<boolean>`
 
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
 // api/test/services/preview-signature.test.ts
 import { describe, it, expect } from 'vitest';
-import { PREVIEW_TTL_MS, signPreview, verifyPreview } from '../../src/services/preview-signature';
+import { PREVIEW_TTL_S, signPreview, verifyPreview } from '../../src/services/preview-signature';
 
 const SECRET = 's'.repeat(24);
 const NOW = 1_800_000_000_000;
 
-describe('preview signatures', () => {
-  it('accepts a fresh signature for the same recording', () => {
-    const { exp, sig } = signPreview('ref1', SECRET, NOW);
-    expect(exp).toBe(NOW + PREVIEW_TTL_MS);
-    expect(verifyPreview('ref1', exp, sig, SECRET, NOW + 1000)).toBe(true);
+describe('preview tokens', () => {
+  it('accepts a fresh token for the same recording', async () => {
+    const token = await signPreview('ref1', SECRET, NOW);
+    expect(await verifyPreview(token, 'ref1', SECRET, NOW + 1000)).toBe(true);
   });
 
-  it('rejects an expired one', () => {
-    const { exp, sig } = signPreview('ref1', SECRET, NOW);
-    expect(verifyPreview('ref1', exp, sig, SECRET, exp + 1)).toBe(false);
+  it('rejects an expired one, and still accepts it just before it expires', async () => {
+    const token = await signPreview('ref1', SECRET, NOW);
+    expect(await verifyPreview(token, 'ref1', SECRET, NOW + (PREVIEW_TTL_S - 5) * 1000)).toBe(true);
+    expect(await verifyPreview(token, 'ref1', SECRET, NOW + (PREVIEW_TTL_S + 5) * 1000)).toBe(false);
   });
 
-  it('rejects a signature reused for another recording, or with a stretched expiry', () => {
-    const { exp, sig } = signPreview('ref1', SECRET, NOW);
-    expect(verifyPreview('ref2', exp, sig, SECRET, NOW)).toBe(false);
-    expect(verifyPreview('ref1', exp + 60_000, sig, SECRET, NOW)).toBe(false);
+  it('rejects a token reused for another recording', async () => {
+    const token = await signPreview('ref1', SECRET, NOW);
+    expect(await verifyPreview(token, 'ref2', SECRET, NOW)).toBe(false);
   });
 
-  it('rejects the wrong secret, a short signature and garbage', () => {
-    const { exp, sig } = signPreview('ref1', SECRET, NOW);
-    expect(verifyPreview('ref1', exp, sig, 'x'.repeat(24), NOW)).toBe(false);
-    expect(verifyPreview('ref1', exp, sig.slice(0, 10), SECRET, NOW)).toBe(false);
-    expect(verifyPreview('ref1', Number.NaN, sig, SECRET, NOW)).toBe(false);
+  it('rejects the wrong secret, a tampered token and garbage', async () => {
+    const token = await signPreview('ref1', SECRET, NOW);
+    expect(await verifyPreview(token, 'ref1', 'x'.repeat(24), NOW)).toBe(false);
+    expect(await verifyPreview(`${token}x`, 'ref1', SECRET, NOW)).toBe(false);
+    expect(await verifyPreview('', 'ref1', SECRET, NOW)).toBe(false);
+    expect(await verifyPreview('not-a-jwt', 'ref1', SECRET, NOW)).toBe(false);
   });
 });
 ```
@@ -3498,29 +3499,34 @@ Expected: FAIL, modules not found.
 
 ```ts
 // api/src/services/preview-signature.ts
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { SignJWT, jwtVerify } from 'jose';
 
 /**
  * A <video> element cannot send an Authorization header, so the preview route is
- * authenticated by a short-lived signature in its query instead. The signature is
- * issued once per viewing session by a query keyed by recording (like
- * storage.signObject), so the <video src> never changes while it plays.
+ * authenticated by a short-lived token in its query instead. The token is issued once
+ * per viewing session by a query keyed by recording (like storage.signObject), so the
+ * <video src> never changes while it plays. jose is already how this api handles JWTs.
  */
-export const PREVIEW_TTL_MS = 6 * 60 * 60 * 1000;
+export const PREVIEW_TTL_S = 6 * 60 * 60;
 
-const mac = (ref: string, exp: number, secret: string) =>
-  createHmac('sha256', secret).update(`preview:${ref}:${exp}`).digest('hex');
+const key = (secret: string) => new TextEncoder().encode(secret);
 
-export function signPreview(ref: string, secret: string, nowMs: number): { exp: number; sig: string } {
-  const exp = nowMs + PREVIEW_TTL_MS;
-  return { exp, sig: mac(ref, exp, secret) };
+export function signPreview(ref: string, secret: string, nowMs: number): Promise<string> {
+  const iat = Math.floor(nowMs / 1000);
+  return new SignJWT({ ref })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt(iat)
+    .setExpirationTime(iat + PREVIEW_TTL_S)
+    .sign(key(secret));
 }
 
-export function verifyPreview(ref: string, exp: number, sig: string, secret: string, nowMs: number): boolean {
-  if (!Number.isFinite(exp) || exp < nowMs) return false;
-  const expected = Buffer.from(mac(ref, exp, secret));
-  const given = Buffer.from(sig);
-  return expected.length === given.length && timingSafeEqual(expected, given);
+export async function verifyPreview(token: string, ref: string, secret: string, nowMs: number): Promise<boolean> {
+  try {
+    const { payload } = await jwtVerify(token, key(secret), { algorithms: ['HS256'], currentDate: new Date(nowMs) });
+    return payload.ref === ref;
+  } catch {
+    return false;
+  }
 }
 ```
 
@@ -3757,7 +3763,7 @@ describe('peaks and preview signing', () => {
     const { path } = await signPreviewPath('r1', deps, 1_800_000_000_000);
     const url = new URL(path, 'https://x.test');
     expect(url.pathname).toBe('/api/recordings/preview/r1');
-    expect(verifyPreview('r1', Number(url.searchParams.get('exp')), url.searchParams.get('sig')!, 's'.repeat(24), 1_800_000_000_000)).toBe(true);
+    expect(await verifyPreview(url.searchParams.get('t')!, 'r1', 's'.repeat(24), 1_800_000_000_000)).toBe(true);
 
     expect((await refusal(signPreviewPath('ghost', deps))).code).toBe('NOT_FOUND');
   });
@@ -4014,8 +4020,8 @@ export async function signPreviewPath(
   const list = await recordings.list();
   if (!list) throw new UseCaseError('PRECONDITION_FAILED', 'The OBS PC is not reachable');
   if (!list.some((r) => r.ref === ref)) throw new UseCaseError('NOT_FOUND', 'Recording not found');
-  const { exp, sig } = signPreview(ref, config.recordingsSecret, nowMs);
-  return { path: `/api/recordings/preview/${encodeURIComponent(ref)}?exp=${exp}&sig=${sig}` };
+  const token = await signPreview(ref, config.recordingsSecret, nowMs);
+  return { path: `/api/recordings/preview/${encodeURIComponent(ref)}?t=${token}` };
 }
 
 export type OpenCutSessionInput = {
@@ -4079,7 +4085,7 @@ Idempotent per cut; deleted recordings are refused with a plain message."
 - Consumes: Task 12 use cases; `sendFailure` (Task 10); `verifyPreview` (Task 11); `completeUpload`, `abortUpload` (Task 10).
 - Produces:
   - tRPC `recordings.list` (query), `recordings.peaks({ref})`, `recordings.signPreview({ref})` (query), `recordings.startCuts({ref, segments})` (mutation), `recordings.cutStatuses({cutIds})` (query)
-  - `createPreviewRouter(deps: Pick<ApiDeps, 'recordings' | 'config'>, now?: () => number): Router` → `GET /preview/:ref?exp&sig`
+  - `createPreviewRouter(deps: Pick<ApiDeps, 'recordings' | 'config'>, now?: () => number): Router` → `GET /preview/:ref?t=<token>`
   - `createInternalRecordingsRouter(deps: Pick<ApiDeps, 'objects' | 'sessions' | 'agenda'>, apiKey: string): Router` → `POST /cuts/:cutId/session`, `POST /sessions/:sessionId/complete`, `POST /sessions/:sessionId/abort` (bearer `WATCHER_API_KEY`)
 
 - [ ] **Step 1: Write the failing route tests**
@@ -4108,7 +4114,7 @@ async function serve(mount: (app: express.Express) => void): Promise<string> {
 afterEach(() => server?.close());
 
 describe('preview route', () => {
-  const url = (base: string, ref: string, exp: number, sig: string) => `${base}/preview/${ref}?exp=${exp}&sig=${sig}`;
+  const url = (base: string, ref: string, token: string) => `${base}/preview/${ref}?t=${token}`;
 
   it('streams the agent\'s ranged response through, with its headers', async () => {
     const deps = fakeDeps({ recordingsSecret: SECRET });
@@ -4116,9 +4122,9 @@ describe('preview route', () => {
       new Response('0123456789', { status: 206, headers: { 'content-type': 'video/mp4', 'content-range': 'bytes 0-9/100', 'accept-ranges': 'bytes' } })
     );
     const base = await serve((a) => a.use(createPreviewRouter(deps, () => NOW)));
-    const { exp, sig } = signPreview('r1', SECRET, NOW);
+    const token = await signPreview('r1', SECRET, NOW);
 
-    const res = await fetch(url(base, 'r1', exp, sig), { headers: { Range: 'bytes=0-9' } });
+    const res = await fetch(url(base, 'r1', token), { headers: { Range: 'bytes=0-9' } });
 
     expect(res.status).toBe(206);
     expect(res.headers.get('content-range')).toBe('bytes 0-9/100');
@@ -4129,26 +4135,26 @@ describe('preview route', () => {
   it('answers 403 without calling the PC for a missing, expired or tampered signature', async () => {
     const deps = fakeDeps({ recordingsSecret: SECRET });
     const base = await serve((a) => a.use(createPreviewRouter(deps, () => NOW)));
-    const { exp, sig } = signPreview('r1', SECRET, NOW);
+    const token = await signPreview('r1', SECRET, NOW);
 
     expect((await fetch(`${base}/preview/r1`)).status).toBe(403);
-    expect((await fetch(url(base, 'r1', exp, 'bad'))).status).toBe(403);
-    expect((await fetch(url(base, 'r2', exp, sig))).status).toBe(403);
-    const old = signPreview('r1', SECRET, NOW - 7 * 3600_000);
-    expect((await fetch(url(base, 'r1', old.exp, old.sig))).status).toBe(403);
+    expect((await fetch(url(base, 'r1', 'bad'))).status).toBe(403);
+    expect((await fetch(url(base, 'r2', token))).status).toBe(403);
+    const old = await signPreview('r1', SECRET, NOW - 7 * 3600_000);
+    expect((await fetch(url(base, 'r1', old))).status).toBe(403);
     expect(deps.recordings.preview).not.toHaveBeenCalled();
   });
 
   it('answers 403 when recordings are not configured, and 502 when the PC is unreachable', async () => {
     const off = fakeDeps({ recordingsSecret: null });
     const baseOff = await serve((a) => a.use(createPreviewRouter(off, () => NOW)));
-    const { exp, sig } = signPreview('r1', SECRET, NOW);
-    expect((await fetch(url(baseOff, 'r1', exp, sig))).status).toBe(403);
+    const token = await signPreview('r1', SECRET, NOW);
+    expect((await fetch(url(baseOff, 'r1', token))).status).toBe(403);
     server.close();
 
     const deps = fakeDeps({ recordingsSecret: SECRET }); // preview() resolves null
     const base = await serve((a) => a.use(createPreviewRouter(deps, () => NOW)));
-    expect((await fetch(url(base, 'r1', exp, sig))).status).toBe(502);
+    expect((await fetch(url(base, 'r1', token))).status).toBe(502);
   });
 });
 
@@ -4254,18 +4260,17 @@ import { sendFailure } from './respond';
 const PASS_THROUGH = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified'];
 
 /**
- * Streams a recording's preview from the OBS PC. Authenticated by the signature in the
+ * Streams a recording's preview from the OBS PC. Authenticated by the signed token in the
  * query, not by a session: a <video> element cannot send an Authorization header. The
- * signature is issued by `recordings.signPreview` and bound to one recording.
+ * token is issued by `recordings.signPreview` and bound to one recording.
  */
 export function createPreviewRouter(deps: Pick<ApiDeps, 'recordings' | 'config'>, now: () => number = Date.now): Router {
   const router = Router();
 
   router.get('/preview/:ref', async (req, res) => {
     const secret = deps.config.recordingsSecret;
-    const exp = Number(req.query.exp);
-    const sig = typeof req.query.sig === 'string' ? req.query.sig : '';
-    if (!secret || !verifyPreview(req.params.ref, exp, sig, secret, now())) {
+    const token = typeof req.query.t === 'string' ? req.query.t : '';
+    if (!secret || !(await verifyPreview(token, req.params.ref, secret, now()))) {
       return res.status(403).json({ error: 'Invalid or expired link' });
     }
 
@@ -5015,8 +5020,6 @@ The UI derives, it does not store (`docs/architecture/video-lifecycle.md`): a se
 - Produces:
   - `type Draft = Segment & { id: string; showId: string | null }`
   - `formatTimecode(s: number): string`, `parseTimecode(text: string): number | null`
-  - `moveEdge(segments: Draft[], id: string, edge: 'start' | 'end', toS: number, durationS: number): Draft[]`
-  - `addSegmentAt(segments: Draft[], atS: number, durationS: number, id: string): Draft[]`
   - `agendaSlot(show: { id: string; date: string; startTime: string; endTime: string }): AgendaSlot | null`
   - `type CutStatusView = { state: 'queued' | 'cutting' | 'uploading' | 'finishing' | 'done' | 'failed' | 'unknown'; error: string | null }`
   - `type SegmentStatus = { state: 'draft' } | { state: 'queued' | 'cutting' | 'finishing' } | { state: 'uploading'; fraction: number | null } | { state: 'ready'; filename: string } | { state: 'failed'; message: string }`
@@ -5046,9 +5049,7 @@ The UI derives, it does not store (`docs/architecture/video-lifecycle.md`): a se
 ```ts
 // ui/test/upload/segments.test.ts
 import { describe, expect, it } from 'vitest';
-import { addSegmentAt, agendaSlot, formatTimecode, moveEdge, parseTimecode, type Draft } from '../../src/upload/segments';
-
-const seg = (id: string, startS: number, endS: number): Draft => ({ id, startS, endS, showId: null });
+import { agendaSlot, formatTimecode, parseTimecode } from '../../src/upload/segments';
 
 describe('timecodes', () => {
   it('formats with tenths, hours only when needed', () => {
@@ -5069,47 +5070,6 @@ describe('timecodes', () => {
 
   it('round-trips what it prints', () => {
     for (const s of [0, 59.9, 3600, 12345.6]) expect(parseTimecode(formatTimecode(s))).toBeCloseTo(s, 1);
-  });
-});
-
-describe('moveEdge', () => {
-  const two = [seg('a', 100, 1000), seg('b', 1000, 2000)];
-
-  it('moves an edge freely inside its room', () => {
-    expect(moveEdge(two, 'a', 'end', 800, 5000).find((s) => s.id === 'a')?.endS).toBe(800);
-  });
-
-  it('never lets an edge cross its neighbour', () => {
-    expect(moveEdge(two, 'a', 'end', 1500, 5000).find((s) => s.id === 'a')?.endS).toBe(1000);
-    expect(moveEdge(two, 'b', 'start', 500, 5000).find((s) => s.id === 'b')?.startS).toBe(1000);
-  });
-
-  it('keeps the minimum length and stays inside the recording', () => {
-    expect(moveEdge(two, 'a', 'start', 990, 5000).find((s) => s.id === 'a')?.startS).toBe(970);
-    expect(moveEdge(two, 'b', 'end', 9999, 5000).find((s) => s.id === 'b')?.endS).toBe(5000);
-    expect(moveEdge(two, 'a', 'start', -50, 5000).find((s) => s.id === 'a')?.startS).toBe(0);
-  });
-
-  it('ignores an unknown id', () => {
-    expect(moveEdge(two, 'zzz', 'end', 10, 5000)).toBe(two);
-  });
-});
-
-describe('addSegmentAt', () => {
-  it('adds a segment of up to 30 minutes at the point', () => {
-    const out = addSegmentAt([], 100, 7200, 'n');
-    expect(out).toEqual([{ id: 'n', startS: 100, endS: 1900, showId: null }]);
-  });
-
-  it('stops at the next segment', () => {
-    const out = addSegmentAt([seg('a', 600, 1000)], 100, 7200, 'n');
-    expect(out.find((s) => s.id === 'n')).toMatchObject({ startS: 100, endS: 600 });
-  });
-
-  it('adds nothing where there is no room', () => {
-    const existing = [seg('a', 100, 1000)];
-    expect(addSegmentAt(existing, 500, 7200, 'n')).toBe(existing);
-    expect(addSegmentAt([seg('a', 120, 1000)], 100, 7200, 'n')).toHaveLength(1);
   });
 });
 
@@ -5187,16 +5147,15 @@ Expected: FAIL, modules not found.
 
 ```ts
 // ui/src/upload/segments.ts
-import { MIN_SEGMENT_SECONDS, type AgendaSlot, type Segment } from '@domain/recording-segments';
+import type { AgendaSlot, Segment } from '@domain/recording-segments';
 
 /**
- * The editor's working copy of a segment. Pure helpers only: the server re-validates
- * everything with the same domain rules, so this exists to make dragging feel right.
+ * The editor's working copy of a segment. Dragging and resizing on the waveform is
+ * wavesurfer's Regions plugin; the server re-validates everything with the domain rules.
  */
 export type Draft = Segment & { id: string; showId: string | null };
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
-const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
 export function formatTimecode(s: number): string {
   const total = Math.max(0, round1(s));
@@ -5217,34 +5176,6 @@ export function parseTimecode(text: string): number | null {
   // Minutes may exceed 59 only when there is no hours part ("62:03" is an hour and two minutes).
   if ((m[1] !== undefined && min >= 60) || sec >= 60) return null;
   return h * 3600 + min * 60 + sec;
-}
-
-const EPS = 1e-6;
-
-/** Move one edge, never past a neighbour, below the minimum length, or off the recording. */
-export function moveEdge(segments: Draft[], id: string, edge: 'start' | 'end', toS: number, durationS: number): Draft[] {
-  const me = segments.find((s) => s.id === id);
-  if (!me) return segments;
-  const others = segments.filter((s) => s.id !== id);
-  const before = others.filter((s) => s.endS <= me.startS + EPS).map((s) => s.endS);
-  const after = others.filter((s) => s.startS >= me.endS - EPS).map((s) => s.startS);
-  const floor = before.length ? Math.max(...before) : 0;
-  const ceil = after.length ? Math.min(...after) : durationS;
-  const value = round1(toS);
-  const next = edge === 'start' ? clamp(value, floor, me.endS - MIN_SEGMENT_SECONDS) : clamp(value, me.startS + MIN_SEGMENT_SECONDS, ceil);
-  return segments.map((s) => (s.id === id ? { ...s, [edge === 'start' ? 'startS' : 'endS']: next } : s));
-}
-
-const DEFAULT_LENGTH_S = 30 * 60;
-
-/** A new segment starting at `atS`, up to 30 minutes, stopping at the next one. Unchanged if there is no room. */
-export function addSegmentAt(segments: Draft[], atS: number, durationS: number, id: string): Draft[] {
-  const startS = round1(atS);
-  if (segments.some((s) => startS >= s.startS && startS < s.endS)) return segments;
-  const next = segments.filter((s) => s.startS >= startS).map((s) => s.startS);
-  const endS = Math.min(startS + DEFAULT_LENGTH_S, durationS, ...next);
-  if (endS - startS < MIN_SEGMENT_SECONDS) return segments;
-  return [...segments, { id, startS, endS, showId: null }].sort((a, b) => a.startS - b.startS);
 }
 
 /**
@@ -5367,7 +5298,7 @@ Domain rules reach the UI as source via an alias, so one copy of the rule."
 ### Task 16: Recordings page, timeline, mock backend, route
 
 **Files:**
-- Create: `ui/src/pages/Recordings.tsx`, `ui/src/components/RecordingTimeline.tsx`
+- Create: `ui/src/pages/Recordings.tsx`, `ui/src/components/SegmentTimeline.tsx`
 - Modify: `ui/src/router.tsx`, `ui/src/dev/fixtures.ts`, `ui/src/dev/mock-backend.ts`
 
 **Interfaces:**
@@ -5376,117 +5307,90 @@ Domain rules reach the UI as source via an alias, so one copy of the rule."
 
 There is no component test harness in `ui/` (its tests are pure functions), so the page is verified in `?mock=1` mode in Step 6, and its logic lives in the pure modules from Task 15.
 
-- [ ] **Step 1: The timeline component**
+- [ ] **Step 1: Add wavesurfer.js and write the timeline component**
+
+Use the library for the waveform, seeking, and draggable/resizable segments instead of hand-rolling canvas and pointer code. Run `pnpm --filter @show-uploader/ui add wavesurfer.js` (v7). Before writing the component, read the installed package's typings (`ui/node_modules/wavesurfer.js/dist/*.d.ts` and `dist/plugins/regions.d.ts`) and confirm the plugin's import path and the event names below; the calls are: `WaveSurfer.create({ container, media, peaks: [peaks], duration, height, waveColor, progressColor, cursorColor, plugins })`, `RegionsPlugin.create()`, `regions.addRegion({ id, start, end, drag, resize, minLength, color, content })`, `regions.enableDragSelection({ color })`, `regions.getRegions()`, `region.setOptions({ start, end })`, `region.remove()`, and the plugin events `region-created` and `region-updated`. Passing `media` (the page's `<video>`) makes the waveform follow and drive playback (click to seek); passing `peaks` and `duration` means it never decodes the multi-hour audio in the browser.
 
 ```tsx
-// ui/src/components/RecordingTimeline.tsx
+// ui/src/components/SegmentTimeline.tsx
 import { useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
+import WaveSurfer from 'wavesurfer.js';
+import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
+import { MIN_SEGMENT_SECONDS } from '@domain/recording-segments';
 import { c, withAlpha } from '../theme';
 import type { Draft } from '../upload/segments';
 
 type Props = {
-  durationS: number;
+  /** The preview <video>; the waveform follows its playback and seeks it on click. */
+  media: HTMLVideoElement | null;
   peaks: number[] | undefined;
+  durationS: number;
   segments: Draft[];
-  playheadS: number;
-  onSeek(s: number): void;
-  onMoveEdge(id: string, edge: 'start' | 'end', toS: number): void;
-  onAdd(atS: number): void;
+  onChange(next: Draft[]): void;
 };
 
-const HEIGHT = 96;
-const HANDLE_PX = 12;
-
-function Handle({ left, onDrag }: { left: string; onDrag(clientX: number): void }) {
-  return (
-    <Box
-      onPointerDown={(e) => {
-        e.stopPropagation();
-        e.currentTarget.setPointerCapture(e.pointerId);
-      }}
-      onPointerMove={(e) => {
-        if (e.currentTarget.hasPointerCapture(e.pointerId)) onDrag(e.clientX);
-      }}
-      onPointerUp={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
-      onClick={(e) => e.stopPropagation()}
-      sx={{
-        position: 'absolute', top: 0, bottom: 0, left, width: HANDLE_PX, ml: `-${HANDLE_PX / 2}px`,
-        cursor: 'ew-resize', backgroundColor: c.ink, opacity: 0.85, touchAction: 'none',
-      }}
-    />
-  );
-}
+const REGION_COLOR = withAlpha(c.link, 0.25);
 
 /**
- * The whole recording on one line: waveform, draggable segments, playhead. Click seeks,
- * double-click adds a segment, the handles move an edge. All the rules (neighbours, the
- * minimum length) live in moveEdge/addSegmentAt, so this only translates pixels to time.
+ * The whole recording as a waveform with draggable, resizable segments. wavesurfer owns the
+ * pointer handling; this keeps its regions and the page's `segments` state in step. The
+ * state is the source of truth, and the domain rules (neighbours, minimum length) are
+ * enforced by validateSegments, which the page shows next to each row.
  */
-export default function RecordingTimeline({ durationS, peaks, segments, playheadS, onSeek, onMoveEdge, onAdd }: Props) {
-  const box = useRef<HTMLDivElement>(null);
-  const canvas = useRef<HTMLCanvasElement>(null);
+export default function SegmentTimeline({ media, peaks, durationS, segments, onChange }: Props) {
+  const host = useRef<HTMLDivElement>(null);
+  const regions = useRef<RegionsPlugin | null>(null);
+  // Event handlers outlive renders; they must always see the current state.
+  const latest = useRef({ segments, onChange });
+  latest.current = { segments, onChange };
 
-  // One bar per pixel column: the loudest peak in that column's slice of the recording.
   useEffect(() => {
-    const el = canvas.current;
-    const host = box.current;
-    if (!el || !host || !peaks?.length) return;
-    const draw = () => {
-      const dpr = window.devicePixelRatio || 1;
-      el.width = Math.floor(host.clientWidth * dpr);
-      el.height = Math.floor(HEIGHT * dpr);
-      const ctx = el.getContext('2d');
-      if (!ctx) return;
-      ctx.clearRect(0, 0, el.width, el.height);
-      ctx.fillStyle = c.muted;
-      for (let x = 0; x < el.width; x++) {
-        const from = Math.floor((x / el.width) * peaks.length);
-        const to = Math.max(from + 1, Math.floor(((x + 1) / el.width) * peaks.length));
-        let max = 0;
-        for (let i = from; i < to && i < peaks.length; i++) if (peaks[i] > max) max = peaks[i];
-        const h = Math.max(1, max * el.height);
-        ctx.fillRect(x, (el.height - h) / 2, 1, h);
-      }
+    if (!host.current || !media || !peaks) return;
+    const plugin = RegionsPlugin.create();
+    const ws = WaveSurfer.create({
+      container: host.current, media, peaks: [peaks], duration: durationS, height: 96,
+      waveColor: c.muted, progressColor: c.ink, cursorColor: c.danger, plugins: [plugin],
+    });
+    regions.current = plugin;
+    plugin.enableDragSelection({ color: REGION_COLOR });
+    // A region the operator drags out on the waveform becomes a new draft segment.
+    plugin.on('region-created', (r) => {
+      const { segments: all, onChange: change } = latest.current;
+      if (all.some((s) => s.id === r.id)) return; // one we created ourselves
+      change([...all, { id: r.id, startS: r.start, endS: r.end, showId: null }]);
+    });
+    plugin.on('region-updated', (r) => {
+      const { segments: all, onChange: change } = latest.current;
+      change(all.map((s) => (s.id === r.id ? { ...s, startS: r.start, endS: r.end } : s)));
+    });
+    return () => {
+      ws.destroy();
+      regions.current = null;
     };
-    draw();
-    const ro = new ResizeObserver(draw);
-    ro.observe(host);
-    return () => ro.disconnect();
-  }, [peaks]);
+  }, [media, peaks, durationS]);
 
-  const timeAt = (clientX: number) => {
-    const r = box.current!.getBoundingClientRect();
-    return Math.min(durationS, Math.max(0, ((clientX - r.left) / r.width) * durationS));
-  };
-  const pct = (s: number) => `${(s / durationS) * 100}%`;
+  // Mirror the state into the waveform: add missing, move changed, drop removed.
+  useEffect(() => {
+    const plugin = regions.current;
+    if (!plugin) return;
+    const existing = new Map(plugin.getRegions().map((r) => [r.id, r]));
+    segments.forEach((s, i) => {
+      const r = existing.get(s.id);
+      if (!r) {
+        plugin.addRegion({
+          id: s.id, start: s.startS, end: s.endS, drag: true, resize: true,
+          minLength: MIN_SEGMENT_SECONDS, color: REGION_COLOR, content: String(i + 1),
+        });
+      } else if (Math.abs(r.start - s.startS) > 0.05 || Math.abs(r.end - s.endS) > 0.05) {
+        r.setOptions({ start: s.startS, end: s.endS });
+      }
+      existing.delete(s.id);
+    });
+    existing.forEach((r) => r.remove());
+  }, [segments, media, peaks, durationS]);
 
-  return (
-    <Box
-      ref={box}
-      onClick={(e) => onSeek(timeAt(e.clientX))}
-      onDoubleClick={(e) => onAdd(timeAt(e.clientX))}
-      sx={{ position: 'relative', height: HEIGHT, backgroundColor: c.accentSoft, border: `1px solid ${c.border}`, userSelect: 'none', cursor: 'crosshair' }}
-    >
-      <Box component="canvas" ref={canvas} sx={{ position: 'absolute', inset: 0, width: '100%', height: HEIGHT }} />
-      {segments.map((s, i) => (
-        <Box key={s.id}>
-          <Box
-            sx={{
-              position: 'absolute', top: 0, bottom: 0, left: pct(s.startS), width: pct(s.endS - s.startS),
-              backgroundColor: withAlpha(c.link, 0.22), borderTop: `3px solid ${c.link}`,
-              fontSize: 11, color: c.link, pl: 0.5, pointerEvents: 'none',
-            }}
-          >
-            {i + 1}
-          </Box>
-          <Handle left={pct(s.startS)} onDrag={(x) => onMoveEdge(s.id, 'start', timeAt(x))} />
-          <Handle left={pct(s.endS)} onDrag={(x) => onMoveEdge(s.id, 'end', timeAt(x))} />
-        </Box>
-      ))}
-      <Box sx={{ position: 'absolute', top: 0, bottom: 0, left: pct(playheadS), width: '2px', backgroundColor: c.danger, pointerEvents: 'none' }} />
-    </Box>
-  );
+  return <Box ref={host} sx={{ backgroundColor: c.accentSoft, border: `1px solid ${c.border}` }} />;
 }
 ```
 
@@ -5510,9 +5414,9 @@ import {
 import { humanDuration } from '../format';
 import { c } from '../theme';
 import { PageLoading } from '../components/Skeleton';
-import RecordingTimeline from '../components/RecordingTimeline';
+import SegmentTimeline from '../components/SegmentTimeline';
 import { resolveSegment, type CutStatusView, type SegmentStatus } from '../upload/resolveSegment';
-import { addSegmentAt, agendaSlot, formatTimecode, moveEdge, parseTimecode, type Draft } from '../upload/segments';
+import { agendaSlot, formatTimecode, parseTimecode, type Draft } from '../upload/segments';
 
 // The PC's clock is Brussels, and so is everyone reading this page.
 const brussels = new Intl.DateTimeFormat('nl-BE', { timeZone: 'Europe/Brussels', dateStyle: 'medium', timeStyle: 'short' });
@@ -5598,7 +5502,8 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
   const [playhead, setPlayhead] = useState(0);
   const [cutByShow, setCutByShow] = useState<Record<string, string>>({});
   const statuses = useCutStatuses(Object.values(cutByShow));
-  const video = useRef<HTMLVideoElement>(null);
+  // The <video> as state, so the waveform can attach once the element exists.
+  const [media, setMedia] = useState<HTMLVideoElement | null>(null);
   const nextId = useRef(1);
   const newId = () => String(nextId.current++);
 
@@ -5611,10 +5516,6 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
   const problems = validateSegments(segments, durationS);
   const canCut = segments.length > 0 && segments.every((s) => s.showId) && problems.length === 0 && !startCuts.isPending;
 
-  const seek = (s: number) => {
-    if (video.current) video.current.currentTime = s;
-    setPlayhead(s);
-  };
   const patch = (id: string, change: Partial<Draft>) => setSegments((all) => all.map((s) => (s.id === id ? { ...s, ...change } : s)));
 
   // Agenda times are DRAFT markers: they fill in a first guess the operator then corrects.
@@ -5639,7 +5540,7 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
 
       {preview.data ? (
         <Box
-          component="video" ref={video} src={preview.data.path} controls preload="metadata" playsInline
+          component="video" ref={setMedia} src={preview.data.path} controls preload="metadata" playsInline
           onTimeUpdate={(e: React.SyntheticEvent<HTMLVideoElement>) => setPlayhead(e.currentTarget.currentTime)}
           sx={{ width: '100%', maxHeight: '45vh', backgroundColor: '#000', display: 'block' }}
         />
@@ -5649,21 +5550,13 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
         </Typography>
       )}
 
-      <RecordingTimeline
-        durationS={durationS} peaks={peaks.data} segments={segments} playheadS={playhead}
-        onSeek={seek}
-        onMoveEdge={(id, edge, toS) => setSegments((all) => moveEdge(all, id, edge, toS, durationS))}
-        onAdd={(at) => setSegments((all) => addSegmentAt(all, at, durationS, newId()))}
-      />
+      <SegmentTimeline media={media} peaks={peaks.data} durationS={durationS} segments={segments} onChange={setSegments} />
       <Typography variant="caption" color="text.disabled">
-        click to seek · double-click to add a segment · drag a handle to move an edge. agenda times are only a first guess.
+        drag on the waveform to add a segment · drag a segment or its edges to adjust · click to seek. agenda times are only a first guess.
       </Typography>
 
       <Stack direction="row" spacing={1}>
         <Button size="small" variant="outlined" onClick={suggest} disabled={!shows.data}>suggest from agenda</Button>
-        <Button size="small" variant="outlined" onClick={() => setSegments((all) => addSegmentAt(all, playhead, durationS, newId()))}>
-          add segment at playhead
-        </Button>
       </Stack>
 
       <Stack spacing={1}>
@@ -5840,8 +5733,8 @@ Expected: no type errors, build succeeds, tests PASS. Fix any type error in `Rec
 
 Run `pnpm dev:ui`, open `http://localhost:5173/recordings?mock=1` and confirm each of:
 1. Two recordings listed; the second says "preparing the editor view…" and its `open` is disabled.
-2. Open the first: the (inert) player area shows, the waveform draws, resizing the window redraws it.
-3. "suggest from agenda" adds segments with shows chosen; drag a handle: it stops at a neighbour and at the minimum length; double-click on empty timeline adds a segment; "← playhead" sets an edge.
+2. Open the first: the (inert) player area shows and the waveform draws from the mock peaks.
+3. "suggest from agenda" adds segments with shows chosen; dragging on the empty waveform adds a segment; dragging a segment or its edges moves it and the in/out fields follow; a segment shorter than 30 seconds or overlapping another shows a red message on its row; "← playhead" sets an edge.
 4. Typing `1:05:00` in an `in` field and pressing Enter commits it; typing `abc` reverts it.
 5. Two segments for the same show are not selectable (the second option is disabled).
 6. "cut N segments" is disabled until every segment has a show; clicking it walks the rows through queued, cutting, uploading, finishing (the mock cycles per poll). The `dubplate` row shows "this show already has a video staged. cutting replaces it." before cutting.
@@ -6190,7 +6083,7 @@ code must keep. Design rationale: `docs/superpowers/specs/2026-10-01-recordings-
 - Retries resume. The PC keeps a finished cut and the ETags of parts that landed; the api
   hands back the same session for the same cut. Only the final attempt (or a deleted
   recording) aborts the session and drops the PC's staged cut.
-- The preview route is authenticated by a short-lived HMAC in the query, because a
+- The preview route is authenticated by a short-lived signed token (JWT, `jose`) in the query, because a
   `<video>` cannot send a header. The signature comes from a query keyed by recording, so
   the `<video src>` never swaps while it plays.
 - Retention (PC): a recording is removed `RETENTION_DAYS` after its newest successful cut
