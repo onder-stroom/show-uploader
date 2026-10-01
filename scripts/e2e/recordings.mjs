@@ -19,12 +19,18 @@ const TOKEN = env.RECORDINGS_AGENT_TOKEN;
 const NAME = '2026-10-01_20-00-00.mkv';
 const SHOWS = ['show-rec-a', 'show-rec-b'];
 
+// Constant 10 Mbit/s video, so a 30 s cut is ~37 MB: more than two 16 MiB parts, which puts part
+// 2..N, the short last part and the PC's part-count check on real MinIO.
+const MIN_MULTIPART_BYTES = 2 * 16 * 1024 * 1024;
+
 // OBS here records HEVC; use it when this ffmpeg can, so the hvc1 path is exercised.
 function makeNight(file) {
   const hevc = execFileSync('ffmpeg', ['-hide_banner', '-encoders']).toString().includes('libx265');
   const video = hevc
-    ? ['-c:v', 'libx265', '-preset', 'ultrafast', '-x265-params', 'keyint=50:min-keyint=50:scenecut=0:log-level=none']
-    : ['-c:v', 'libx264', '-preset', 'ultrafast', '-g', '50', '-keyint_min', '50', '-sc_threshold', '0'];
+    ? ['-c:v', 'libx265', '-preset', 'ultrafast', '-b:v', '10M',
+      '-x265-params', 'keyint=50:min-keyint=50:scenecut=0:log-level=none:vbv-maxrate=10000:vbv-bufsize=2000:strict-cbr=1']
+    : ['-c:v', 'libx264', '-preset', 'ultrafast', '-g', '50', '-keyint_min', '50', '-sc_threshold', '0',
+      '-b:v', '10M', '-minrate', '10M', '-maxrate', '10M', '-bufsize', '2M', '-x264-params', 'nal-hrd=cbr'];
   execFileSync('ffmpeg', [
     '-y', '-loglevel', 'error',
     '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=25',
@@ -144,6 +150,7 @@ export async function run() {
       const want = segments[i].endS - segments[i].startS;
       check(`${show}: staged under incoming/ with the cut's filename`, row.s3_key.startsWith('incoming/') && row.filename.endsWith('.mp4'), row.filename);
       check(`${show}: object on S3 matches the recorded size`, (await store.size(row.s3_key)) === Number(row.size_bytes));
+      check(`${show}: uploaded in 3+ parts (larger than 2 x 16 MiB)`, Number(row.size_bytes) > MIN_MULTIPART_BYTES, `${row.size_bytes} bytes`);
       const file = path.join(work, `${show}.mp4`);
       fs.writeFileSync(file, await store.get(row.s3_key));
       const seconds = probeSeconds(file);
@@ -179,6 +186,9 @@ export async function run() {
     check('the archive kept the cut\'s exact length', Math.abs(up.duration_seconds - 30) <= 1, `${up.duration_seconds}s`);
     const archived = path.join(work, 'archived.mp4');
     fs.writeFileSync(archived, await store.get(up.video_s3_key));
+    // A dropped edit list (a 1 s preroll) would still pass the integer check above.
+    const archivedSeconds = probeSeconds(archived);
+    check('the archived MP4 is the cut\'s length to 0.3 s', Math.abs(archivedSeconds - 30) < 0.3, `${archivedSeconds}s`);
     // The archive's loudness pass resamples (96 kHz), so only the stream count and mono are stable.
     const arch = audioStreams(archived);
     check('the archived MP4 still holds a single mono audio stream (track 1)', arch.length === 1 && arch[0].endsWith(',1'), arch.join(' | '));
