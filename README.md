@@ -17,7 +17,7 @@ Upload recorded DJ sets and live shows to YouTube and MixCloud simultaneously. P
 
 ```
 Windows PC (OBS)
-  └─ recordings service (OBS PC) ──Tailscale──► worker
+  └─ recordings service (OBS PC) ◄──Tailscale── worker
 
 Cloud server (Docker Compose)
   ├─ api      (Express, port 3000) — REST + SSE + serves UI
@@ -208,7 +208,7 @@ Open `https://your-domain.com` in your browser. You'll be redirected to Zitadel 
 
 ### New Upload
 
-1. **Videos from drop folder** (top of page) — click a file to use it. Or use the file dropzone below to upload manually.
+1. **Pick a video** — use the file dropzone to upload manually. To cut a night's recording into per-artist uploads, use the **Recordings** page (`/recordings`) instead. (Legacy: a "from drop folder" list appears at the top only if the old watcher notify route has registered files; nothing in this repo feeds it any more.)
 2. **Pick a show** — select from your upcoming agenda. Title, description, and tags are pre-filled and AI-refined.
 3. **Edit metadata** — adjust title, description, tags, and cover image URL as needed.
 4. **Trim** (optional) — enter Start and/or End times in `HH:MM:SS` format to cut the beginning or end. Applied to all outputs (YouTube, MixCloud, archive).
@@ -262,7 +262,8 @@ The mock is behind `import.meta.env.DEV` and a dynamic import, so none of it shi
 | Route | Auth |
 |---|---|
 | Web UI + all `/api/*` routes | Zitadel OIDC — valid JWT with the `member` or `admin` project role |
-| `POST /api/watcher/notify` | Bearer token (`WATCHER_API_KEY`) — unaffected by Zitadel |
+| `POST /api/watcher/notify` (legacy drop-folder route) | Bearer token (`WATCHER_API_KEY`) — unaffected by Zitadel |
+| `/api/internal/recordings/*` (worker only) | Bearer token (`WATCHER_API_KEY`) |
 
 Users who sign up via Zitadel but hold neither role see "Access pending approval" and cannot use the app. To grant access: Zitadel console → Projects → Team → Users → find the user → assign role `member` (or `admin`). Other roles on the project, like `website-admin`, don't grant access here.
 

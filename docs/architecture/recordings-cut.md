@@ -28,11 +28,17 @@ code must keep. Design rationale: `docs/superpowers/specs/2026-10-01-recordings-
    (ref, show, in, out), so a double confirm is one job.
 4. **worker** `cut-recording` (`worker/src/jobs/cut-recording.ts`): asks the PC to cut
    (`ffmpeg -c copy`, start exact via an MP4 edit list), learns the real size, asks the api
-   to open a multipart session bound to the show, hands the PC the presigned part URLs,
-   waits, then asks the api to complete. Three attempts, exponential backoff from 30 s.
-5. **api** completion (`POST /api/recordings/sessions/:id/complete`, worker only) runs the
+   to open a multipart session bound to the show, hands the PC the presigned part URLs
+   (16 MiB parts, `PART_SIZE` in `api/src/usecases/uploads.ts`), waits, then asks the api
+   to complete. Queue `recording-cuts`, one job at a time (concurrency 1). Three attempts,
+   exponential backoff from 30 s.
+5. **api** completion (`POST /api/internal/recordings/sessions/:sessionId/complete`) runs the
    same `completeUpload` use case the browser's multipart route uses: it finishes the S3
    object and writes `staged_uploads[show]` atomically.
+   The worker-only internal routes (Bearer `WATCHER_API_KEY`, mounted at
+   `/api/internal/recordings`) are `POST /cuts/:cutId/session` (open), `POST
+   /sessions/:sessionId/complete` and `POST /sessions/:sessionId/abort`. The browser-facing
+   preview is the separate `GET /api/recordings/preview/:ref?t=<token>`.
 6. From there it is an ordinary staged recording: publish, then the archive job (loudness,
    remux, m4a), then the platforms. The archive job is unchanged.
 
