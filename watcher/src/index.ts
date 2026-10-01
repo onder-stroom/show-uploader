@@ -52,12 +52,11 @@ async function loop(): Promise<void> {
   if (busy) return; // a long prepare must not overlap the next tick
   busy = true;
   try {
-    recordingActive = (
-      await tick(
-        { library, media, mixAudioStream: config.mixAudioStream, retentionMs },
-        Date.now()
-      )
-    ).recordingActive;
+    await tick(
+      { library, media, mixAudioStream: config.mixAudioStream, retentionMs },
+      Date.now(),
+      (active) => (recordingActive = active)
+    );
   } catch (err) {
     console.error('background pass failed:', err);
   } finally {

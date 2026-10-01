@@ -43,13 +43,15 @@ export async function processCutRecording(job: Job<CutJobPayload>, { agent, sess
     what: string,
     resume?: () => Promise<AgentCut>
   ): Promise<AgentCut> {
-    const deadline = now() + timeoutMs;
+    let deadline = now() + timeoutMs;
     let current = first;
     let failingSince: number | null = null;
     for (;;) {
       if (current.state === 'source_gone') throw new UnrecoverableError(current.reason ?? 'The recording was deleted from the PC');
       if (done(current)) return current;
       if (current.state === 'failed') throw new Error(current.reason ?? 'The PC reported a failure');
+      // Time the PC spends deliberately paused (OBS is recording) does not count.
+      if (current.paused) deadline = now() + timeoutMs;
       if (now() > deadline) throw new Error(`Timed out waiting for ${what}`);
       await sleep(config.cutPoll.intervalMs);
       let next: AgentCut | null;

@@ -465,13 +465,23 @@ describe('sweep', () => {
     expect(fs.readdirSync(dir).sort()).toEqual(['fresh.mp4', 'young.json', 'young.mp4']);
   });
 
-  it('never touches a cut that is tracked and in progress, however old its files', () => {
-    put('live.json', 30 * DAY, rec('live', 'uploading')); put('live.mp4', 30 * DAY);
+  it('a tracked cut touched within maxAgeMs is never swept, however it is tracked', () => {
+    put('live.json', 1 * DAY, rec('live', 'uploading')); put('live.mp4', 30 * DAY);
     const { manager } = make({ now: () => NOW });
     manager.load();
     manager.sweep(14 * DAY);
     expect(fs.readdirSync(dir).sort()).toEqual(['live.json', 'live.mp4']);
     expect(manager.get('live')).not.toBeNull();
+  });
+
+  it('a cut or uploading record abandoned for maxAgeMs (its drop never reached the PC) is swept', () => {
+    put('c.json', 30 * DAY, rec('c', 'cut')); put('c.mp4', 30 * DAY);
+    put('u.json', 30 * DAY, rec('u', 'uploading')); put('u.mp4', 30 * DAY);
+    const { manager } = make({ now: () => NOW });
+    manager.load();
+    manager.sweep(14 * DAY);
+    expect(fs.readdirSync(dir)).toEqual([]);
+    expect(manager.get('c')).toBeNull();
   });
 
   it('after a restart, a finished record whose drop once failed is swept by age', () => {
@@ -534,6 +544,21 @@ describe('isBusy: pause while OBS records', () => {
     expect(deps.putPart).toHaveBeenCalledTimes(3);
     expect(waits).toBeGreaterThanOrEqual(2);
     expect(manager.get('cut1')).toMatchObject({ state: 'done' });
+  });
+
+  it('reports paused while it waits for OBS, and not after', async () => {
+    let busy = true;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { manager } = make({ isBusy: () => busy, sleep: () => gate });
+    manager.start(req);
+    await Promise.resolve();
+    expect(manager.get('cut1')).toMatchObject({ state: 'cutting', paused: true });
+    busy = false;
+    release();
+    await manager.idle();
+    expect(manager.get('cut1')).toMatchObject({ state: 'cut', paused: false });
+    expect(fs.readFileSync(path.join(dir, 'cut1.json'), 'utf8')).not.toContain('paused');
   });
 
   it('drop while paused ends cleanly and leaves nothing behind', async () => {

@@ -32,6 +32,8 @@ export type AgentCut = {
   /** Present when state is 'done'. */
   etags: { n: number; etag: string }[] | null;
   reason: string | null;
+  /** True while the PC deliberately waits for OBS to stop recording: the wait must not count it. */
+  paused?: boolean;
 };
 
 export type CutRequest = { cutId: string; ref: string; startS: number; endS: number };

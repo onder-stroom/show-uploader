@@ -9,9 +9,12 @@ import { pruneOnce } from './prune';
  */
 export async function tick(
   deps: { library: Library; media: Media; mixAudioStream: number; retentionMs: number },
-  nowMs: number
+  nowMs: number,
+  /** Called as soon as the state is known, before any prepare, so a pause lifts without waiting for it. */
+  onActive?: (active: boolean) => void
 ): Promise<{ recordingActive: boolean }> {
   const { recordingActive } = deps.library.sync(nowMs);
+  onActive?.(recordingActive);
 
   if (!recordingActive) {
     const next = deps.library.list().find((s) => s.state === 'preparing');

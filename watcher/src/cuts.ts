@@ -57,6 +57,8 @@ type Record_ = AgentCut & {
   partSize?: number;
   /** Set by drop(): in-flight work must stop and write nothing. Never persisted. */
   dropped?: boolean;
+  /** Waiting for OBS to stop recording. Never persisted. */
+  paused?: boolean;
 };
 
 export async function putPartViaFetch(url: string, body: Buffer, timeoutMs = 10 * 60_000): Promise<string> {
@@ -154,8 +156,8 @@ export class CutManager {
   }
 
   /**
-   * Remove staging files nothing will use again: a record not tracked (or finished and
-   * untouched) for `maxAgeMs`, and a stray .mp4 with no record for an hour. A failed drop
+   * Remove staging files nothing will use again: a record untouched for `maxAgeMs`,
+   * and a stray .mp4 with no record for an hour. A failed drop
    * (EBUSY on Windows) or a crash leaves these behind, multi-GB each. Never throws.
    */
   sweep(maxAgeMs: number): void {
@@ -170,10 +172,8 @@ export class CutManager {
         byId.set(m[1], entry);
       }
       for (const [id, { exts, newest }] of byId) {
-        const live = this.cuts.get(id);
-        // A cut in progress or waiting for its upload is never touched. A finished one is
-        // tracked again after a restart, so it is swept by age like an untracked one.
-        if (live && live.state !== 'done' && live.state !== 'failed' && live.state !== 'source_gone') continue;
+        // Tracked or not, a cut untouched for maxAgeMs is abandoned: live work rewrites its record
+        // (cuts take minutes, uploads persist every part), so nothing running is that old.
         const limit = exts.has('json') ? maxAgeMs : ORPHAN_GRACE_MS;
         if (this.d.now() - newest > limit) this.drop(id);
       }
@@ -185,7 +185,14 @@ export class CutManager {
 
   /** Pause while OBS records; ends as soon as the cut is dropped. Only ever delays work. */
   private async whileBusy(rec: Record_): Promise<void> {
-    while (this.d.isBusy?.() && !rec.dropped) await this.d.sleep(BUSY_POLL_MS);
+    try {
+      while (this.d.isBusy?.() && !rec.dropped) {
+        rec.paused = true;
+        await this.d.sleep(BUSY_POLL_MS);
+      }
+    } finally {
+      rec.paused = false;
+    }
   }
 
   /** Resolves when no cut or upload is running. For tests and a clean shutdown. */
@@ -324,11 +331,11 @@ export class CutManager {
     if (rec.dropped) return;
     fs.mkdirSync(this.d.stagingDir, { recursive: true });
     const file = path.join(this.d.stagingDir, `${rec.cutId}.json`);
-    fs.writeFileSync(`${file}.tmp`, JSON.stringify({ ...rec, dropped: undefined }));
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify({ ...rec, dropped: undefined, paused: undefined }));
     fs.renameSync(`${file}.tmp`, file);
   }
 }
 
 function view(r: Record_): AgentCut {
-  return { cutId: r.cutId, state: r.state, sizeBytes: r.sizeBytes, etags: r.etags, reason: r.reason };
+  return { cutId: r.cutId, state: r.state, sizeBytes: r.sizeBytes, etags: r.etags, reason: r.reason, paused: !!r.paused };
 }

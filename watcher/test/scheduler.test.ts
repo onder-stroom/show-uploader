@@ -39,6 +39,15 @@ describe('tick', () => {
     expect(lib.list()[0].state).toBe('ready');
   });
 
+  it('reports the OBS state before any prepare starts, so a pause lifts without waiting for it', async () => {
+    age('a.mkv', 60_000);
+    const m = media();
+    const order: string[] = [];
+    m.probe = vi.fn(async () => (order.push('probe'), { durationS: 10, videoCodec: 'h264', audioStreams: 1 }));
+    await tick({ library: lib, media: m, mixAudioStream: 0, retentionMs: 1e12 }, NOW, (a) => order.push(`active:${a}`));
+    expect(order.slice(0, 2)).toEqual(['active:false', 'probe']);
+  });
+
   it('does NOT start ffmpeg work while a file is still growing: OBS must keep its CPU', async () => {
     age('done.mkv', 60_000);
     age('live.mkv', 1_000);

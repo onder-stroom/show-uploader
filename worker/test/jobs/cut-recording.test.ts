@@ -107,6 +107,37 @@ describe('processCutRecording', () => {
     await expect(run(deps, fakeJob(payload), () => (t += 600))).rejects.toThrow(/timed out/i);
   });
 
+  describe('a paused PC', () => {
+    it('does not count paused time against the cut wait, and completes once cut', async () => {
+      const deps = fakeDeps(); // cut timeout 1000 ms
+      deps.agent.startCut.mockResolvedValueOnce(cut({ state: 'cutting', sizeBytes: null, paused: true }));
+      const paused = cut({ state: 'cutting', sizeBytes: null, paused: true });
+      deps.agent.cut.mockResolvedValueOnce(null);
+      for (let i = 0; i < 5; i++) deps.agent.cut.mockResolvedValueOnce(paused);
+      deps.agent.cut.mockResolvedValueOnce(cut({ state: 'cut' }));
+      let t = 0;
+      await expect(run(deps, fakeJob(payload), () => (t += 600))).resolves.toBe(payload.filename);
+    });
+
+    it('a cutting that is not paused still times out', async () => {
+      const deps = fakeDeps();
+      deps.agent.startCut.mockResolvedValue(cut({ state: 'cutting', sizeBytes: null, paused: false }));
+      deps.agent.cut.mockResolvedValue(cut({ state: 'cutting', sizeBytes: null, paused: false }));
+      let t = 0;
+      await expect(run(deps, fakeJob(payload), () => (t += 600))).rejects.toThrow(/timed out/i);
+    });
+
+    it('does not count paused time against the upload wait either', async () => {
+      const deps = fakeDeps();
+      deps.agent.upload.mockResolvedValueOnce(cut({ state: 'uploading', paused: true }));
+      deps.agent.cut.mockResolvedValueOnce(null);
+      for (let i = 0; i < 5; i++) deps.agent.cut.mockResolvedValueOnce(cut({ state: 'uploading', paused: true }));
+      deps.agent.cut.mockResolvedValueOnce(cut({ state: 'done' }));
+      let t = 0;
+      await expect(run(deps, fakeJob(payload), () => (t += 600))).resolves.toBe(payload.filename);
+    });
+  });
+
   describe('polling', () => {
     const uploading = () => cut({ state: 'uploading' });
 
