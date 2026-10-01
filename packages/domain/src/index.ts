@@ -6,3 +6,4 @@ export * from './show-slug';
 export * from './storage-layout';
 export * from './jobs';
 export * from './recording-segments';
+export * from './recordings-contract';
