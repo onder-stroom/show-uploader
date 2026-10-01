@@ -43,18 +43,41 @@ export async function openUploadSession(input: OpenSessionInput, { objects, sess
   }
 }
 
-// Finish: complete the S3 object and — the key robustness point — record the staged
-// video against the show ATOMICALLY here. The show record therefore always knows it
-// has a video the instant the upload finishes, independent of the client
-// (navigation, refresh, a crash) or the worker that drove it.
+// Finish: verify the parts, complete the S3 object, stage the video against the show,
+// then mark the session. Staging comes before the mark because it is an idempotent
+// upsert: if it fails the session is still in progress and a retry redoes it, whereas
+// marking first would make the retry return early and leave the show unstaged forever.
+// The show record knows it has a video the instant the upload finishes, independent
+// of the client (navigation, refresh, a crash) or the worker that drove it.
 export async function completeUpload(sessionId: string, { objects, sessions }: SessionDeps): Promise<{ key: string }> {
   const s = await sessions.get(sessionId);
   if (!s) throw new UseCaseError('NOT_FOUND', 'Unknown session');
   if (s.status === 'completed') return { key: s.s3_key };
 
-  await objects.completeMultipart(s.s3_key, s.s3_upload_id);
+  const size = Number(s.size_bytes);
+  // The key is unique per session, so an existing object means S3 already completed it
+  // on an earlier attempt (the parts list is gone by then): go on to stage and mark.
+  if (!(await objects.info(s.s3_key)).exists) {
+    // S3 happily completes a gapped or short part list; refuse it here, or a truncated
+    // file would be staged as if it were whole.
+    const expected = Math.max(1, Math.ceil(size / s.part_size));
+    const parts = await objects.uploadedParts(s.s3_key, s.s3_upload_id);
+    const numbers = parts.map((p) => p.PartNumber ?? 0).sort((a, b) => a - b);
+    const total = parts.reduce((sum, p) => sum + (p.Size ?? 0), 0);
+    if (numbers.length !== expected || numbers.some((n, i) => n !== i + 1) || total !== size) {
+      throw new UseCaseError(
+        'PRECONDITION_FAILED',
+        `Upload incomplete: expected parts 1..${expected} totalling ${size} bytes, got ${numbers.length} parts totalling ${total} bytes`
+      );
+    }
+    try {
+      await objects.completeMultipart(s.s3_key, s.s3_upload_id);
+    } catch (err) {
+      if (!(await objects.info(s.s3_key)).exists) throw err;
+    }
+  }
+  if (s.show_id) await sessions.stage(s.show_id, s.s3_key, s.filename, size);
   await sessions.setStatus(s.id, 'completed');
-  if (s.show_id) await sessions.stage(s.show_id, s.s3_key, s.filename, Number(s.size_bytes));
   return { key: s.s3_key };
 }
 

@@ -63,7 +63,17 @@ export function fakeDeps(opts: {
     },
     objects: {
       info: vi.fn(async (key: string) => ({ exists: objects.has(key), size: objects.has(key) ? 1 : null })),
-      uploadedParts: vi.fn(async () => []),
+      // A complete part list for the session by default (every part full, last one short).
+      uploadedParts: vi.fn(async (key: string, _uploadId: string) => {
+        const s = [...sessionRows.values()].find((r) => r.s3_key === key);
+        if (!s) return [];
+        const size = Number(s.size_bytes);
+        const n = Math.max(1, Math.ceil(size / s.part_size));
+        return Array.from({ length: n }, (_, i) => ({
+          PartNumber: i + 1,
+          Size: i < n - 1 ? s.part_size : size - s.part_size * (n - 1),
+        }));
+      }),
       findShowFolder: vi.fn(async (show: AgendaShow) => opts.folders?.[show.id] ?? null),
       createMultipart: vi.fn(async (_key: string, _contentType: string) => 'mpu-1'),
       presignPart: vi.fn(async (key: string, _uploadId: string, n: number) => `https://s3.test/${key}?part=${n}`),

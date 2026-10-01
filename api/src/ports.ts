@@ -49,7 +49,7 @@ export interface UploadStore {
 /** The S3 bucket. */
 export interface ObjectStore {
   info(key: string): Promise<{ exists: boolean; size: number | null }>;
-  uploadedParts(key: string, uploadId: string): Promise<{ Size?: number }[]>;
+  uploadedParts(key: string, uploadId: string): Promise<{ PartNumber?: number; Size?: number }[]>;
   /** The `shows/<folder>/` holding an agenda record's recording, if any. */
   findShowFolder(show: AgendaShow): Promise<string | null>;
   /** Multipart uploads: start one, presign a part, finish it, abandon it. */
