@@ -29,17 +29,26 @@ export function createRecordingsAgent(o: { baseUrl?: string; token?: string; tim
     }
   }
 
+  // Reads a JSON array body; any failure to read or parse it, a non-ok status or the
+  // wrong shape is "unreachable" too. Non-ok bodies are cancelled so the socket is freed.
+  async function jsonArray<T>(path: string): Promise<T[] | null> {
+    const res = await call(path, {}, AbortSignal.timeout(timeoutMs));
+    if (!res) return null;
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {});
+      return null;
+    }
+    try {
+      const body: unknown = await res.json();
+      return Array.isArray(body) ? (body as T[]) : null;
+    } catch {
+      return null;
+    }
+  }
+
   return {
-    async list() {
-      const res = await call('/recordings', {}, AbortSignal.timeout(timeoutMs));
-      if (!res?.ok) return null;
-      return (await res.json()) as AgentRecording[];
-    },
-    async peaks(ref) {
-      const res = await call(`/recordings/${encodeURIComponent(ref)}/peaks`, {}, AbortSignal.timeout(timeoutMs));
-      if (!res?.ok) return null;
-      return (await res.json()) as number[];
-    },
+    list: () => jsonArray<AgentRecording>('/recordings'),
+    peaks: (ref) => jsonArray<number>(`/recordings/${encodeURIComponent(ref)}/peaks`),
     // No timeout here: it would cut a stream that is merely long. The route aborts it
     // when the viewer goes away.
     preview(ref, range, signal) {

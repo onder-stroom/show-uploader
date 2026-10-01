@@ -1,3 +1,4 @@
+import { SignJWT, decodeJwt } from 'jose';
 import { describe, it, expect } from 'vitest';
 import { PREVIEW_TTL_S, signPreview, verifyPreview } from '../../src/services/preview-signature';
 
@@ -27,5 +28,23 @@ describe('preview tokens', () => {
     expect(await verifyPreview(`${token}x`, 'ref1', SECRET, NOW)).toBe(false);
     expect(await verifyPreview('', 'ref1', SECRET, NOW)).toBe(false);
     expect(await verifyPreview('not-a-jwt', 'ref1', SECRET, NOW)).toBe(false);
+  });
+
+  it('rejects a token signed with another algorithm or unsigned', async () => {
+    const hs384 = await new SignJWT({ ref: 'ref1' })
+      .setProtectedHeader({ alg: 'HS384' })
+      .setExpirationTime(Math.floor(NOW / 1000) + 600)
+      .sign(new TextEncoder().encode(SECRET));
+    expect(await verifyPreview(hs384, 'ref1', SECRET, NOW)).toBe(false);
+
+    const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const none = `${b64({ alg: 'none' })}.${b64({ ref: 'ref1', exp: Math.floor(NOW / 1000) + 600 })}.`;
+    expect(await verifyPreview(none, 'ref1', SECRET, NOW)).toBe(false);
+  });
+
+  it('issues iat and exp from the injected clock', async () => {
+    const claims = decodeJwt(await signPreview('ref1', SECRET, NOW));
+    expect(claims.iat).toBe(NOW / 1000);
+    expect(claims.exp).toBe(NOW / 1000 + PREVIEW_TTL_S);
   });
 });

@@ -15,7 +15,13 @@ async function serve(handler: (req: http.IncomingMessage, res: http.ServerRespon
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
-afterEach(() => server?.close());
+const closeServer = () =>
+  new Promise<void>((r) => {
+    if (!server) return r();
+    server.closeAllConnections?.();
+    server.close(() => r());
+  });
+afterEach(closeServer);
 
 describe('recordings agent adapter', () => {
   it('lists recordings with the bearer token', async () => {
@@ -32,9 +38,9 @@ describe('recordings agent adapter', () => {
   it('treats a refused connection, a timeout and a 401 as unreachable', async () => {
     expect(await createRecordingsAgent({ baseUrl: 'http://127.0.0.1:1', token: 't'.repeat(20) }).list()).toBeNull();
 
-    const slow = await serve(() => {});
+    const slow = await serve((_req, res) => void setTimeout(() => res.end(), 300));
     expect(await createRecordingsAgent({ baseUrl: slow, token: 't'.repeat(20), timeoutMs: 50 }).list()).toBeNull();
-    server.close();
+    await closeServer();
 
     const denied = await serve((_req, res) => void ((res.statusCode = 401), res.end()));
     expect(await createRecordingsAgent({ baseUrl: denied, token: 't'.repeat(20) }).list()).toBeNull();
@@ -44,7 +50,7 @@ describe('recordings agent adapter', () => {
     const ok = await serve((_req, res) => res.setHeader('content-type', 'application/json').end('[0.1,0.2]'));
     expect(await createRecordingsAgent({ baseUrl: ok, token: 't'.repeat(20) }).peaks('r 1')).toEqual([0.1, 0.2]);
     expect(seen.url).toBe('/v1/recordings/r%201/peaks');
-    server.close();
+    await closeServer();
 
     const none = await serve((_req, res) => void ((res.statusCode = 404), res.end()));
     expect(await createRecordingsAgent({ baseUrl: none, token: 't'.repeat(20) }).peaks('r1')).toBeNull();
@@ -56,5 +62,26 @@ describe('recordings agent adapter', () => {
     expect(upstream?.status).toBe(206);
     expect(await upstream?.text()).toBe('0123456789');
     expect(seen.range).toBe('bytes=0-9');
+  });
+
+  it('treats a 200 with a non-JSON body or the wrong shape as unreachable', async () => {
+    const t = 't'.repeat(20);
+    const html = await serve((_req, res) => res.setHeader('content-type', 'text/html').end('<html>proxy</html>'));
+    expect(await createRecordingsAgent({ baseUrl: html, token: t }).list()).toBeNull();
+    expect(await createRecordingsAgent({ baseUrl: html, token: t }).peaks('r1')).toBeNull();
+    await closeServer();
+
+    const obj = await serve((_req, res) => res.setHeader('content-type', 'application/json').end('{}'));
+    expect(await createRecordingsAgent({ baseUrl: obj, token: t }).list()).toBeNull();
+    expect(await createRecordingsAgent({ baseUrl: obj, token: t }).peaks('r1')).toBeNull();
+  });
+
+  it('passes a 404 preview through as a Response, but a refused connection is null', async () => {
+    const t = 't'.repeat(20);
+    const missing = await serve((_req, res) => void ((res.statusCode = 404), res.end()));
+    const upstream = await createRecordingsAgent({ baseUrl: missing, token: t }).preview('r1', undefined);
+    expect(upstream?.status).toBe(404);
+    await upstream?.body?.cancel();
+    expect(await createRecordingsAgent({ baseUrl: 'http://127.0.0.1:1', token: t }).preview('r1', undefined)).toBeNull();
   });
 });
