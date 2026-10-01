@@ -186,3 +186,15 @@ export const videoInfo: Record<string, { exists: boolean; size: number | null; f
   upl_published: { exists: true, size: 1_181_116_006, filename: 'breakfast.mp4' },
   upl_stale: { exists: false, size: null, filename: 'latenight.mkv' },
 };
+
+// A night recorded on the OBS PC: ready, plus one still being prepared.
+export const recordings = [
+  {
+    ref: 'rec-night-1', filename: '2026-07-31_19-55-00.mkv', sizeBytes: 9_400_000_000, mtimeMs: Date.parse('2026-07-31T23:55:00Z'),
+    durationS: 14_400, state: 'ready' as const, hasPreview: true, recordedAtMs: Date.parse('2026-07-31T19:55:00Z'),
+  },
+  {
+    ref: 'rec-night-2', filename: '2026-08-07_19-58-00.mkv', sizeBytes: 3_100_000_000, mtimeMs: Date.parse('2026-08-07T22:00:00Z'),
+    durationS: null, state: 'preparing' as const, hasPreview: false, recordedAtMs: Date.parse('2026-08-07T19:58:00Z'),
+  },
+];
