@@ -14,7 +14,8 @@ code must keep. Design rationale: `docs/superpowers/specs/2026-10-01-recordings-
 
 1. **PC** (`watcher/`, a Windows service, not in Docker): watches the OBS recordings
    folder. A file whose mtime has stopped moving is finished. While any file is still
-   growing, no ffmpeg work starts. A finished recording gets a verified MP4 master (video
+   growing, or OBS is recording, no ffmpeg prepare starts, and cuts and part uploads pause until
+   it stops (a prepare already running is not interrupted). A finished recording gets a verified MP4 master (video
    plus audio track 1 only, HEVC tagged `hvc1`), a small H.264 preview and waveform peaks.
 2. **Operator** (`/recordings`): marks one segment per artist on the timeline and picks the
    show for each. Agenda times only *suggest*: they are draft markers, never trusted.
@@ -30,11 +31,17 @@ code must keep. Design rationale: `docs/superpowers/specs/2026-10-01-recordings-
    (`ffmpeg -c copy`, start exact via an MP4 edit list), learns the real size, asks the api
    to open a multipart session bound to the show, hands the PC the presigned part URLs
    (16 MiB parts, `PART_SIZE` in `api/src/usecases/uploads.ts`), waits, then asks the api
-   to complete. Queue `recording-cuts`, one job at a time (concurrency 1). Three attempts,
+   to complete. The wait polls the PC: a failed poll (a blip) does not end it, only polls failing
+   continuously for 5 minutes do, and a PC that restarted mid-upload (state back to `cut`) is
+   asked to upload again, which resumes the parts that landed. Queue `recording-cuts`, one job at a time (concurrency 1). Three attempts,
    exponential backoff from 30 s.
 5. **api** completion (`POST /api/internal/recordings/sessions/:sessionId/complete`) runs the
-   same `completeUpload` use case the browser's multipart route uses: it finishes the S3
-   object and writes `staged_uploads[show]` atomically.
+   same `completeUpload` use case the browser's multipart route uses: it first checks the S3
+   part list is complete (parts exactly 1..N, sizes summing to the recorded size, else
+   `PRECONDITION_FAILED`: S3 itself completes a gapped list), finishes the S3 object, writes
+   `staged_uploads[show]` and only then marks the session completed. That is not atomic but it is
+   idempotent: a failed step leaves the session in progress and a retry carries on (an object S3
+   already completed is recognised by existing).
    The worker-only internal routes (Bearer `WATCHER_API_KEY`, mounted at
    `/api/internal/recordings`) are `POST /cuts/:cutId/session` (open), `POST
    /sessions/:sessionId/complete` and `POST /sessions/:sessionId/abort`. The browser-facing
@@ -72,6 +79,9 @@ code must keep. Design rationale: `docs/superpowers/specs/2026-10-01-recordings-
   query keyed by recording, so the `<video src>` never swaps while it plays.
 - Retention (PC): a recording is removed `RETENTION_DAYS` (default 14) after its newest
   successful cut upload. Never for a recording that was not cut.
+- Staging sweep (PC): cut files whose drop failed or that survived a restart are removed at boot
+  and each pass (a record untouched for `RETENTION_DAYS`; a stray MP4 with no record after 1 h).
+  A cut in progress or waiting for its upload is never touched.
 - A manual OBS file split just produces more recordings; each is handled on its own.
 
 ## Operating it

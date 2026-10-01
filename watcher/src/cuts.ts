@@ -178,7 +178,8 @@ export class CutManager {
         if (this.d.now() - newest > limit) this.drop(id);
       }
     } catch (err) {
-      console.warn('staging sweep:', err instanceof Error ? err.message : err);
+      // No staging dir yet means nothing to sweep.
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') console.warn('staging sweep:', err instanceof Error ? err.message : err);
     }
   }
 
