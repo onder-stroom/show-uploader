@@ -109,7 +109,7 @@ describe('start', () => {
   it('refuses an unknown recording and an id that is not filesystem-safe', () => {
     const { manager } = make();
     expect(() => manager.start({ ...req, ref: 'nope' })).toThrow(CutError);
-    expect(() => manager.start({ ...req, cutId: '../evil' })).toThrow(/BAD_ID|id/i);
+    expect(() => manager.start({ ...req, cutId: '../evil' })).toThrow(expect.objectContaining({ code: 'BAD_ID' }));
   });
 });
 
@@ -206,6 +206,144 @@ describe('upload', () => {
   });
 });
 
+describe('upload validation and resume', () => {
+  async function ready(over: Partial<CutDeps> = {}) {
+    const ctx = make(over);
+    ctx.manager.start(req);
+    await ctx.manager.idle();
+    return ctx;
+  }
+
+  it('discards ETags from a different part size', async () => {
+    let fail = true;
+    const { manager, deps } = await ready({
+      putPart: vi.fn(async (url: string, body: Buffer) => {
+        if (url.endsWith('/3') && fail) throw new Error('reset');
+        return `"e${body.length}"`;
+      }),
+    });
+    manager.upload('cut1', { partSize: 16, parts: parts(3) });
+    await manager.idle();
+    fail = false;
+    vi.mocked(deps.putPart).mockClear();
+    manager.upload('cut1', { partSize: 20, parts: parts(2) });
+    await manager.idle();
+    expect(manager.get('cut1')?.state).toBe('done');
+    expect(vi.mocked(deps.putPart)).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects duplicate or non-contiguous part numbers and a zero part size', async () => {
+    const { manager } = await ready();
+    manager.upload('cut1', { partSize: 16, parts: [{ n: 1, url: 'u1' }, { n: 1, url: 'u1' }, { n: 2, url: 'u2' }] });
+    await manager.idle();
+    expect(manager.get('cut1')).toMatchObject({ state: 'failed', reason: expect.stringMatching(/part list/i) });
+    manager.upload('cut1', { partSize: 0, parts: parts(1) });
+    await manager.idle();
+    expect(manager.get('cut1')).toMatchObject({ state: 'failed', reason: expect.stringMatching(/part list/i) });
+  });
+
+  it('fails instead of uploading zero-filled data when the staged file is shorter than recorded', async () => {
+    fs.writeFileSync(path.join(dir, 'cut2.mp4'), Buffer.alloc(10));
+    fs.writeFileSync(
+      path.join(dir, 'cut2.json'),
+      JSON.stringify({ cutId: 'cut2', ref: 'known', startS: 0, endS: 1, state: 'cut', sizeBytes: 40, etags: null, reason: null, audioStream: 0, videoCodec: null, parts: [] })
+    );
+    const { manager, deps } = make();
+    manager.load();
+    manager.upload('cut2', { partSize: 40, parts: parts(1) });
+    await manager.idle();
+    expect(manager.get('cut2')).toMatchObject({ state: 'failed', reason: expect.stringMatching(/shorter/) });
+    expect(deps.putPart).not.toHaveBeenCalled();
+  });
+
+  it('refuses to upload a cut that failed mid-ffmpeg, even if a partial file is on disk', async () => {
+    const { manager } = await ready({
+      cutFile: vi.fn(async (o) => {
+        fs.writeFileSync(o.output, Buffer.alloc(5));
+        throw new Error('ffmpeg died');
+      }),
+    });
+    fs.writeFileSync(path.join(dir, 'cut1.mp4'), Buffer.alloc(5));
+    expect(manager.get('cut1')?.state).toBe('failed');
+    expect(() => manager.upload('cut1', { partSize: 16, parts: parts(1) })).toThrow(CutError);
+  });
+});
+
+describe('drop with work in flight', () => {
+  it('a cut dropped while ffmpeg runs leaves nothing behind, and the id can be started again', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { manager } = make({
+      cutFile: vi.fn(async (o) => {
+        await gate;
+        fs.writeFileSync(o.output, Buffer.alloc(40));
+      }),
+    });
+    manager.start(req);
+    manager.drop('cut1');
+    release();
+    await manager.idle();
+    expect(fs.readdirSync(dir)).toEqual([]);
+    expect(manager.get('cut1')).toBeNull();
+  });
+
+  it('an upload dropped between parts stops sending and leaves nothing behind', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { manager, deps } = make({ putPart: vi.fn(async () => (await gate, '"e"')) });
+    manager.start(req);
+    await manager.idle();
+    manager.upload('cut1', { partSize: 16, parts: parts(3) });
+    await vi.waitFor(() => expect(deps.putPart).toHaveBeenCalledTimes(1));
+    manager.drop('cut1');
+    release();
+    await manager.idle();
+    expect(deps.putPart).toHaveBeenCalledTimes(1);
+    expect(fs.readdirSync(dir)).toEqual([]);
+    expect(manager.get('cut1')).toBeNull();
+    expect(uploaded).toEqual([]);
+  });
+
+  it('drop of an unsafe id leaves other files alone', () => {
+    fs.writeFileSync(path.join(dir, 'keep.json'), '{}');
+    make().manager.drop('../evil');
+    expect(fs.readdirSync(dir)).toEqual(['keep.json']);
+  });
+});
+
+describe('errors that escape the happy path', () => {
+  it('a record that cannot be written ends failed, and idle() still resolves', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { manager } = make({
+      cutFile: vi.fn(async (o) => {
+        fs.writeFileSync(o.output, Buffer.alloc(40));
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.writeFileSync(dir, 'now a file');
+      }),
+    });
+    manager.start(req);
+    await expect(manager.idle()).resolves.toBeUndefined();
+    expect(manager.get('cut1')?.state).toBe('failed');
+    expect(warn).toHaveBeenCalled();
+    fs.rmSync(dir, { force: true });
+    fs.mkdirSync(dir);
+    warn.mockRestore();
+  });
+
+  it('a putPart that throws synchronously is a failed upload', async () => {
+    const { manager } = make({
+      putPart: vi.fn(() => {
+        throw new Error('sync boom');
+      }),
+    });
+    manager.start(req);
+    await manager.idle();
+    manager.upload('cut1', { partSize: 40, parts: parts(1) });
+    await manager.idle();
+    expect(manager.get('cut1')).toMatchObject({ state: 'failed', reason: expect.stringContaining('sync boom') });
+  });
+});
+
 describe('restart and cleanup', () => {
   // The records a process leaves behind if it dies mid-cut and mid-upload, written by hand
   // so the test is deterministic rather than racing a real upload.
@@ -269,9 +407,12 @@ describe('putPartViaFetch', () => {
     });
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     const { port } = server.address() as { port: number };
-    expect(await putPartViaFetch(`http://127.0.0.1:${port}/x`, Buffer.alloc(100))).toBe('"abc"');
-    expect(seen).toBe(100);
-    server.close();
+    try {
+      expect(await putPartViaFetch(`http://127.0.0.1:${port}/x`, Buffer.alloc(100))).toBe('"abc"');
+      expect(seen).toBe(100);
+    } finally {
+      server.close();
+    }
   });
 
   it('throws on a non-2xx so the retry loop sees it', async () => {
@@ -281,7 +422,10 @@ describe('putPartViaFetch', () => {
     });
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     const { port } = server.address() as { port: number };
-    await expect(putPartViaFetch(`http://127.0.0.1:${port}/x`, Buffer.alloc(1))).rejects.toThrow(/403/);
-    server.close();
+    try {
+      await expect(putPartViaFetch(`http://127.0.0.1:${port}/x`, Buffer.alloc(1))).rejects.toThrow(/403/);
+    } finally {
+      server.close();
+    }
   });
 });
