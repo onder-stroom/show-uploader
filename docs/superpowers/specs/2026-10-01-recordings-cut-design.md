@@ -74,6 +74,23 @@ Owns files, ffmpeg and the upload of parts. Nothing else.
 - The MKV or MP4 can be deleted by hand at any moment. The source for a cut is the MP4
   if present, else the MKV (remuxed on demand), else the cut fails as `source_gone`.
 
+#### Packaging and runtime
+
+- **Node 20 + TypeScript**, the same stack as the current `watcher/`, so it shares
+  `packages/domain` (segment rules, contract types) with the api and worker. Not Tauri
+  or Electron: the service has no UI, and a Rust rewrite would lose the shared package.
+- **Runs as a Windows service** under a wrapper (WinSW or NSSM): starts at boot,
+  restarts on crash, logs to a file. Status is visible from the uploader's Recordings
+  page (reachable, ready count, preparing), so no tray icon is needed.
+- **Bundles `ffmpeg.exe` and `ffprobe.exe`** next to the service. Their path comes from
+  config, not `PATH`.
+- **Config** from env or a config file: recordings folder, token, listen address (the
+  Tailscale IP), stable window, retention days.
+- **Updates are manual at first** (replace the folder, restart the service). A
+  self-update step can come later without changing this design.
+- **Independence from the OBS agent:** separate process, install and failure domain.
+  If this service crashes or hogs the CPU, recording is unaffected.
+
 ### api
 
 - **Port** `RecordingsAgent` in `api/src/ports.ts`: list recordings and open a preview
@@ -215,3 +232,4 @@ still existing.
 - Social clips from raw recordings.
 - Any change to the OBS agent.
 - Auto-update for the PC service (manual install first).
+- A tray icon or any UI on the PC.
