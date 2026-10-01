@@ -41,14 +41,15 @@ export function createServer(deps: {
   status(): { recordingActive: boolean };
 }): express.Express {
   const app = express();
-  // Part lists carry ~200 presigned URLs for a multi-GB cut.
-  app.use(express.json({ limit: '2mb' }));
-
+  // Auth first, so unauthenticated callers never reach body parsing.
   app.use((req: Request, res: Response, next: NextFunction) => {
     const header = req.headers.authorization ?? '';
     if (header.startsWith('Bearer ') && safeEqual(header.slice(7), deps.token)) return next();
     res.status(401).json({ error: 'unauthorized' });
   });
+
+  // Part lists carry ~200 presigned URLs for a multi-GB cut.
+  app.use(express.json({ limit: '2mb' }));
 
   app.get('/v1/health', (_req, res) => {
     const all = deps.library.list();
@@ -72,7 +73,11 @@ export function createServer(deps: {
     // sendFile handles Range, If-Range and conditional requests itself. `dotfiles: 'allow'`
     // is essential: the work folder is `.show-uploader`, and send answers 404 for any path
     // containing a dot-segment by default.
-    res.type('video/mp4').sendFile(file, { acceptRanges: true, dotfiles: 'allow' });
+    res.type('video/mp4').sendFile(file, { acceptRanges: true, dotfiles: 'allow' }, (err) => {
+      if (!err) return;
+      console.error('preview failed:', err);
+      if (!res.headersSent) res.status(500).json({ error: 'internal error' });
+    });
   });
 
   app.get('/v1/recordings/:ref/peaks', (req, res) => {
@@ -111,6 +116,17 @@ export function createServer(deps: {
   app.delete('/v1/cuts/:cutId', (req, res) => {
     deps.cuts.drop(req.params.cutId);
     res.status(204).end();
+  });
+
+  // Express 4's default handler would answer with an HTML stack trace.
+  app.use((err: Error & { type?: string; status?: number }, _req: Request, res: Response, next: NextFunction) => {
+    if (res.headersSent) return next(err);
+    if (err.type === 'entity.parse.failed' || err.status === 400 || err.status === 413) {
+      res.status(err.status ?? 400).json({ error: 'invalid body' });
+      return;
+    }
+    console.error('request failed:', err);
+    res.status(500).json({ error: 'internal error' });
   });
 
   return app;
