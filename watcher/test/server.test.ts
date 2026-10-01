@@ -55,6 +55,14 @@ afterEach(async () => {
 const auth = { Authorization: `Bearer ${TOKEN}` };
 const json = { ...auth, 'Content-Type': 'application/json' };
 
+describe('body limit', () => {
+  it('accepts a part list for a segment of tens of GB (3 MB of JSON), not a 413', async () => {
+    const parts = Array.from({ length: 4000 }, (_, i) => ({ n: i + 1, url: `https://s3/${'x'.repeat(700)}/${i}` }));
+    const res = await fetch(`${base}/v1/cuts/nope/upload`, { method: 'POST', headers: json, body: JSON.stringify({ partSize: 16, parts }) });
+    expect(res.status).toBe(404); // reached the handler: unknown cut
+  });
+});
+
 describe('auth', () => {
   it('rejects a missing and a wrong token', async () => {
     expect((await fetch(`${base}/v1/recordings`)).status).toBe(401);

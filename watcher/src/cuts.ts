@@ -15,6 +15,10 @@ import type { Library } from './library';
 
 export const PART_ATTEMPTS = 5;
 const MAX_BACKOFF_MS = 30_000;
+// How often a paused cut or upload looks again at whether OBS is still recording.
+const BUSY_POLL_MS = 5_000;
+// A staged .mp4 with no record: this old before the sweep treats it as an orphan.
+const ORPHAN_GRACE_MS = 60 * 60_000;
 const ID = /^[A-Za-z0-9_-]{1,80}$/;
 
 export class CutError extends Error {
@@ -38,6 +42,8 @@ export type CutDeps = {
   mixAudioStream: number;
   now(): number;
   sleep(ms: number): Promise<void>;
+  /** True while OBS records: cuts and uploads wait, the live stream shares this PC. */
+  isBusy?: () => boolean;
 };
 
 type Record_ = AgentCut & {
@@ -53,8 +59,9 @@ type Record_ = AgentCut & {
   dropped?: boolean;
 };
 
-export async function putPartViaFetch(url: string, body: Buffer): Promise<string> {
-  const res = await fetch(url, { method: 'PUT', body: new Uint8Array(body) });
+export async function putPartViaFetch(url: string, body: Buffer, timeoutMs = 10 * 60_000): Promise<string> {
+  // A stalled connection must fail (and be retried) rather than hang the upload.
+  const res = await fetch(url, { method: 'PUT', body: new Uint8Array(body), signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`part upload failed: ${res.status}`);
   return res.headers.get('etag') ?? '';
 }
@@ -146,6 +153,40 @@ export class CutManager {
     }
   }
 
+  /**
+   * Remove staging files nothing will use again: a record not tracked (or finished and
+   * untouched) for `maxAgeMs`, and a stray .mp4 with no record for an hour. A failed drop
+   * (EBUSY on Windows) or a crash leaves these behind, multi-GB each. Never throws.
+   */
+  sweep(maxAgeMs: number): void {
+    try {
+      const byId = new Map<string, { exts: Set<string>; newest: number }>();
+      for (const name of fs.readdirSync(this.d.stagingDir)) {
+        const m = /^(.+)\.(json|mp4)$/.exec(name);
+        if (!m || !ID.test(m[1])) continue;
+        const entry = byId.get(m[1]) ?? { exts: new Set(), newest: 0 };
+        entry.exts.add(m[2]);
+        entry.newest = Math.max(entry.newest, fs.statSync(path.join(this.d.stagingDir, name)).mtimeMs);
+        byId.set(m[1], entry);
+      }
+      for (const [id, { exts, newest }] of byId) {
+        const live = this.cuts.get(id);
+        // A cut in progress or waiting for its upload is never touched. A finished one is
+        // tracked again after a restart, so it is swept by age like an untracked one.
+        if (live && live.state !== 'done' && live.state !== 'failed' && live.state !== 'source_gone') continue;
+        const limit = exts.has('json') ? maxAgeMs : ORPHAN_GRACE_MS;
+        if (this.d.now() - newest > limit) this.drop(id);
+      }
+    } catch (err) {
+      console.warn('staging sweep:', err instanceof Error ? err.message : err);
+    }
+  }
+
+  /** Pause while OBS records; ends as soon as the cut is dropped. Only ever delays work. */
+  private async whileBusy(rec: Record_): Promise<void> {
+    while (this.d.isBusy?.() && !rec.dropped) await this.d.sleep(BUSY_POLL_MS);
+  }
+
   /** Resolves when no cut or upload is running. For tests and a clean shutdown. */
   async idle(): Promise<void> {
     while (this.running.size > 0) await Promise.all([...this.running]);
@@ -157,6 +198,8 @@ export class CutManager {
       const source = this.d.library.sourceFor(rec.ref);
       if (!source) return this.finish(rec, { state: 'source_gone', reason: 'The recording was deleted from the PC' });
 
+      await this.whileBusy(rec);
+      if (rec.dropped) return;
       // The master has one audio stream; an original still has every OBS track.
       rec.audioStream = path.basename(source) === 'master.mp4' ? 0 : this.d.mixAudioStream;
       fs.mkdirSync(this.d.stagingDir, { recursive: true });
@@ -204,6 +247,7 @@ export class CutManager {
 
       handle = await fs.promises.open(file, 'r');
       for (const part of [...req.parts].sort((a, b) => a.n - b.n)) {
+        await this.whileBusy(rec);
         if (rec.dropped) return;
         if (rec.parts.some((p) => p.n === part.n)) continue; // landed on an earlier attempt
         const offset = (part.n - 1) * req.partSize;

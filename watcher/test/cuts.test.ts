@@ -429,3 +429,120 @@ describe('putPartViaFetch', () => {
     }
   });
 });
+
+describe('putPartViaFetch timeout', () => {
+  it('fails instead of hanging when the server never answers', async () => {
+    const server = http.createServer(() => {}); // accepts the request and never replies
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address() as { port: number };
+    try {
+      await expect(putPartViaFetch(`http://127.0.0.1:${port}/x`, Buffer.alloc(1), 100)).rejects.toThrow();
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+});
+
+describe('sweep', () => {
+  const DAY = 86_400_000;
+  const NOW = 100 * DAY;
+  const old = (file: string, ageMs: number) => fs.utimesSync(path.join(dir, file), new Date(NOW - ageMs), new Date(NOW - ageMs));
+  const put = (file: string, ageMs: number, content = '{}') => {
+    fs.writeFileSync(path.join(dir, file), content);
+    old(file, ageMs);
+  };
+  const rec = (cutId: string, state: string) => JSON.stringify({
+    cutId, ref: 'known', startS: 0, endS: 10, state, sizeBytes: 40, etags: null, reason: null, audioStream: 0, videoCodec: 'hevc', parts: [],
+  });
+
+  it('removes an old untracked pair, a stray old mp4 and nothing newer', () => {
+    put('gone.json', 15 * DAY); put('gone.mp4', 15 * DAY);
+    put('young.json', 1 * DAY); put('young.mp4', 1 * DAY);
+    put('stray.mp4', 2 * 3_600_000);
+    put('fresh.mp4', 60_000);
+    make({ now: () => NOW }).manager.sweep(14 * DAY);
+    expect(fs.readdirSync(dir).sort()).toEqual(['fresh.mp4', 'young.json', 'young.mp4']);
+  });
+
+  it('never touches a cut that is tracked and in progress, however old its files', () => {
+    put('live.json', 30 * DAY, rec('live', 'uploading')); put('live.mp4', 30 * DAY);
+    const { manager } = make({ now: () => NOW });
+    manager.load();
+    manager.sweep(14 * DAY);
+    expect(fs.readdirSync(dir).sort()).toEqual(['live.json', 'live.mp4']);
+    expect(manager.get('live')).not.toBeNull();
+  });
+
+  it('after a restart, a finished record whose drop once failed is swept by age', () => {
+    put('left.json', 30 * DAY, rec('left', 'done')); put('left.mp4', 30 * DAY);
+    const { manager } = make({ now: () => NOW });
+    manager.load();
+    manager.sweep(14 * DAY);
+    expect(fs.readdirSync(dir)).toEqual([]);
+    expect(manager.get('left')).toBeNull();
+  });
+
+  it('never throws, even when the staging dir is missing or removal fails', () => {
+    const { manager } = make({ now: () => NOW, stagingDir: path.join(dir, 'nope') });
+    expect(() => manager.sweep(1)).not.toThrow();
+    put('a.json', 30 * DAY);
+    const spy = vi.spyOn(fs, 'rmSync').mockImplementation(() => { throw new Error('EBUSY'); });
+    try {
+      expect(() => make({ now: () => NOW }).manager.sweep(DAY)).not.toThrow();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe('isBusy: pause while OBS records', () => {
+  it('a cut waits while busy, then runs', async () => {
+    let busyFor = 3;
+    const sleep = vi.fn(async () => void busyFor--);
+    const { manager, deps } = make({ isBusy: () => busyFor > 0, sleep });
+    manager.start(req);
+    await manager.idle();
+    expect(sleep).toHaveBeenCalledTimes(3);
+    expect(deps.cutFile).toHaveBeenCalledTimes(1);
+    expect(manager.get('cut1')).toMatchObject({ state: 'cut' });
+  });
+
+  it('a cut is not started at all while busy', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let busy = true;
+    const { manager, deps } = make({ isBusy: () => busy, sleep: () => gate });
+    manager.start(req);
+    await Promise.resolve();
+    expect(deps.cutFile).not.toHaveBeenCalled();
+    busy = false;
+    release();
+    await manager.idle();
+    expect(deps.cutFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('an upload waits between parts while busy, and the cut stays uploading, not failed', async () => {
+    let busy = false;
+    let waits = 0;
+    const sleep = vi.fn(async () => { waits++; if (waits >= 2) busy = false; });
+    const { manager, deps } = make({ isBusy: () => busy, sleep, putPart: vi.fn(async () => { busy = true; return '"e"'; }) });
+    manager.start(req);
+    await manager.idle();
+    manager.upload('cut1', { partSize: 16, parts: parts(3) });
+    await manager.idle();
+    expect(deps.putPart).toHaveBeenCalledTimes(3);
+    expect(waits).toBeGreaterThanOrEqual(2);
+    expect(manager.get('cut1')).toMatchObject({ state: 'done' });
+  });
+
+  it('drop while paused ends cleanly and leaves nothing behind', async () => {
+    const { manager, deps } = make({ isBusy: () => true, sleep: async () => { await new Promise((r) => setImmediate(r)); } });
+    manager.start(req);
+    await vi.waitFor(() => expect(fs.existsSync(path.join(dir, 'cut1.json'))).toBe(true));
+    manager.drop('cut1');
+    await manager.idle();
+    expect(deps.cutFile).not.toHaveBeenCalled();
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+});

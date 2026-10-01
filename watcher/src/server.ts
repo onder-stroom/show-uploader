@@ -48,8 +48,9 @@ export function createServer(deps: {
     res.status(401).json({ error: 'unauthorized' });
   });
 
-  // Part lists carry ~200 presigned URLs for a multi-GB cut.
-  app.use(express.json({ limit: '2mb' }));
+  // A part list is ~700 bytes per presigned URL (one per 16 MiB part): 16 MB covers a
+  // segment of ~300 GB, far past what a recording gives.
+  app.use(express.json({ limit: '16mb' }));
 
   app.get('/v1/health', (_req, res) => {
     const all = deps.library.list();

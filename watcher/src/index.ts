@@ -24,6 +24,8 @@ const media: Media = {
   peaks: (file, audioStream) => computePeaks(tools, file, audioStream),
 };
 
+let recordingActive = false;
+
 const cuts = new CutManager({
   library,
   cutFile: (o) => runFfmpeg(tools.ffmpeg, buildCutArgs(o)),
@@ -32,8 +34,11 @@ const cuts = new CutManager({
   mixAudioStream: config.mixAudioStream,
   now: Date.now,
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  isBusy: () => recordingActive,
 });
 cuts.load();
+const retentionMs = config.retentionDays * 86_400_000;
+cuts.sweep(retentionMs);
 
 // A recording that failed last run gets another go after a restart; nothing retries it
 // on its own, so one bad file cannot loop forever.
@@ -41,7 +46,6 @@ for (const s of library.list()) {
   if (s.state === 'failed') library.save({ ...s, state: 'preparing', error: null });
 }
 
-let recordingActive = false;
 let busy = false;
 
 async function loop(): Promise<void> {
@@ -50,13 +54,14 @@ async function loop(): Promise<void> {
   try {
     recordingActive = (
       await tick(
-        { library, media, mixAudioStream: config.mixAudioStream, retentionMs: config.retentionDays * 86_400_000 },
+        { library, media, mixAudioStream: config.mixAudioStream, retentionMs },
         Date.now()
       )
     ).recordingActive;
   } catch (err) {
     console.error('background pass failed:', err);
   } finally {
+    cuts.sweep(retentionMs);
     busy = false;
   }
 }
