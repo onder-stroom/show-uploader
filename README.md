@@ -1,6 +1,6 @@
 # Show Uploader
 
-Upload recorded DJ sets and live shows to YouTube and MixCloud simultaneously. Pick a show from your agenda, select a video file (or let the drop-folder watcher handle it), trim if needed, and publish — all in one click.
+Upload recorded DJ sets and live shows to YouTube and MixCloud simultaneously. Pick a show from your agenda, select a video file (or cut it from an OBS recording), trim if needed, and publish — all in one click.
 
 ## What it does
 
@@ -9,7 +9,7 @@ Upload recorded DJ sets and live shows to YouTube and MixCloud simultaneously. P
 - Archives first: trims, loudness-normalises, remuxes the recording to MP4 and extracts an AAC 256kbps (m4a) audio track, both stored in Minio under the show's folder
 - Then uploads the archived video to **YouTube** and the archived audio to **MixCloud**
 - Writes the YouTube, MixCloud and archive links back to the agenda (PocketBase)
-- Windows drop-folder watcher: drag a recording to a local folder and it uploads to S3 automatically
+- Recordings service on the OBS PC: prepares each OBS recording, and the Recordings page cuts a night into per-artist uploads, one per show
 
 ---
 
@@ -17,8 +17,7 @@ Upload recorded DJ sets and live shows to YouTube and MixCloud simultaneously. P
 
 ```
 Windows PC (OBS)
-  └─ watcher script  ──upload──►  Minio S3 (in Docker)
-                     ──notify──►  API
+  └─ recordings service (OBS PC) ──Tailscale──► worker
 
 Cloud server (Docker Compose)
   ├─ api      (Express, port 3000) — REST + SSE + serves UI
@@ -38,7 +37,7 @@ External
 ## Prerequisites
 
 - Docker + Docker Compose (on the cloud server)
-- Node.js 20+ and pnpm (on the Windows machine, for the watcher)
+- Node.js 20+ and pnpm (on the Windows machine, for the recordings service)
 - A [Groq](https://console.groq.com) API key (free tier)
 - YouTube Data API v3 credentials
 - MixCloud app credentials
@@ -76,7 +75,7 @@ Edit `.env` — every variable is documented inline. At minimum fill in:
 | `YOUTUBE_CLIENT_SECRET` | See YouTube setup below |
 | `YOUTUBE_REFRESH_TOKEN` | See YouTube setup below |
 | `MIXCLOUD_ACCESS_TOKEN` | See MixCloud setup below |
-| `WATCHER_API_KEY` | Random secret — paste same value into watcher `.env` |
+| `WATCHER_API_KEY` | Random secret — authenticates the worker's calls to the api |
 | `UI_USERNAME` | HTTP Basic Auth username for the web UI |
 | `UI_PASSWORD` | HTTP Basic Auth password for the web UI |
 
@@ -106,7 +105,7 @@ your-domain.com {
 }
 ```
 
-Minio S3 API (port 9000) should also be publicly accessible for the Windows watcher to upload files directly. Keep the Minio console (port 9001) private or firewall it.
+Minio S3 API (port 9000) must be reachable by the browser (presigned uploads) and by the OBS PC's recordings service (it uploads cut parts to presigned URLs). Keep the Minio console (port 9001) private or firewall it.
 
 ### 5. Updating
 
@@ -193,48 +192,13 @@ Restart the worker: `docker compose restart worker`
 
 ---
 
-## Windows drop-folder watcher
+## Recordings service (OBS PC)
 
-The watcher is a standalone Node.js script that runs on your Windows machine (where OBS saves recordings). It watches a local folder and automatically uploads new files to Minio.
+A small Node.js service (`watcher/`) that runs as a Windows service (WinSW) on the machine where OBS saves recordings. It prepares each finished recording (verified MP4 master, small preview, waveform peaks), cuts the segments you mark on the **Recordings** page losslessly, and uploads only those cuts to S3. It never calls the api itself: the uploader's worker drives it over Tailscale (`RECORDINGS_AGENT_URL` and `RECORDINGS_AGENT_TOKEN` in the cloud `.env`; leave them unset to turn the feature off).
 
-### Setup
+Install and operate it per [`watcher/README.md`](watcher/README.md). How it fits together and the rules it keeps: [`docs/architecture/recordings-cut.md`](docs/architecture/recordings-cut.md).
 
-```powershell
-cd watcher
-cp .env.example .env
-```
-
-Edit `watcher/.env`:
-
-```env
-WATCH_FOLDER=C:\Users\you\obs-drop
-S3_ENDPOINT=https://minio.your-domain.com   # public Minio URL (port 9000)
-S3_ACCESS_KEY=your-minio-root-user
-S3_SECRET_KEY=your-minio-root-password
-S3_BUCKET=show-uploader
-API_URL=https://your-show-uploader.example.com
-API_KEY=same-value-as-WATCHER_API_KEY-in-cloud-env
-```
-
-### Run
-
-```powershell
-pnpm install
-pnpm run dev
-```
-
-To run at Windows startup, create a scheduled task that runs:
-```
-node C:\path\to\show-uploader\watcher\dist\index.js
-```
-
-### How it works
-
-1. New file appears in the watch folder → watcher waits until the file size is stable for 20 seconds (so OBS has finished writing)
-2. Uploads to Minio under `uploads/{timestamp}-{filename}`
-3. POSTs to `/api/watcher/notify` — the cloud API records it in the database
-4. In the web UI, the file appears at the top of the **New Upload** page under "Videos from drop folder"
-5. Click the file to select it, fill in metadata, publish
+The old drop-folder route (`POST /api/watcher/notify`) still exists but is legacy.
 
 ---
 
@@ -367,5 +331,5 @@ Re-run the OAuth flow to get a fresh refresh token.
 **MixCloud upload fails**
 Check that `MIXCLOUD_ACCESS_TOKEN` is set and not expired. Re-run the OAuth flow if needed.
 
-**Watcher not picking up files**
-Make sure `WATCH_FOLDER` exists and the path uses backslashes (Windows). Check `API_URL` is reachable from the Windows machine.
+**Recordings page says the OBS PC is not reachable**
+See "Operating it" in `docs/architecture/recordings-cut.md`: service running, Tailscale ACL, `RECORDINGS_AGENT_URL`/`TOKEN`.

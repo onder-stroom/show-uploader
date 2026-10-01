@@ -10,7 +10,7 @@ S3. It never talks to the api itself: the uploader's worker drives it over Tails
 1. Node 20 and `ffmpeg.exe` + `ffprobe.exe` (a full build with libx264) in `C:\show-uploader\tools`.
 2. `pnpm install && pnpm --filter @show-uploader/watcher build`, copy `watcher/` (with `dist/` and `node_modules`) to `C:\show-uploader\watcher`.
 3. Copy `.env.example` to `.env` and fill it in. Set `LISTEN_HOST` to the PC's Tailscale IP.
-4. Install the service with WinSW (`show-uploader-recordings.xml` here): `show-uploader-recordings.exe install`, then `start`.
+4. Install the service with WinSW (`service/show-uploader-recordings.xml`): `show-uploader-recordings.exe install`, then `start`.
 5. In the Tailscale admin, allow only the uploader host to reach port 8787 on this machine.
 
 ## Operate
@@ -22,3 +22,11 @@ S3. It never talks to the api itself: the uploader's worker drives it over Tails
 - Derived files live in `RECORDINGS_DIR\.show-uploader`. They are disposable.
 - Retention: a recording is removed `RETENTION_DAYS` after its newest successful cut
   upload. A recording that was never cut is never removed automatically.
+- A prepare (remux, preview, peaks) already running when OBS starts recording is not
+  interrupted: it is single-flight and runs at below-normal priority. `GET /v1/health`
+  reports `recordingActive`, refreshed only between passes, so it can lag.
+- The service has no `error` handler on listen. A bad `LISTEN_HOST` (for example the
+  Tailscale IP not up yet at boot) crashes it; WinSW restarts it after 10 s.
+- Cuts are stream copy: the start is exact, the end runs a few frames long (within ~0.2 s).
+- Only audio track 1 is used (`MIX_AUDIO_STREAM`, default stream 0).
+- Leave optional values unset in `.env` rather than empty: an empty value fails validation.
