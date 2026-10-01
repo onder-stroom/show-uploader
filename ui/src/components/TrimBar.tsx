@@ -68,8 +68,9 @@ const trimRangeStyles = {
   '.trim-range::-moz-range-thumb': THUMB,
   '.trim-range:focus-visible::-webkit-slider-thumb': FOCUS,
   '.trim-range:focus-visible::-moz-range-thumb': FOCUS,
-  '.trim-range:disabled::-webkit-slider-thumb': { background: c.faint, cursor: 'not-allowed' },
-  '.trim-range:disabled::-moz-range-thumb': { background: c.faint, cursor: 'not-allowed' },
+  // A locked thumb must not swallow pointers, so the selection under it still seeks on click.
+  '.trim-range:disabled::-webkit-slider-thumb': { background: c.faint, pointerEvents: 'none' },
+  '.trim-range:disabled::-moz-range-thumb': { background: c.faint, pointerEvents: 'none' },
 };
 
 const noScrollbar = { scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } } as const;

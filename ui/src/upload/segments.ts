@@ -53,3 +53,11 @@ export function newSegmentAt(playhead: number, durationS: number, others: Segmen
   const endS = round1(Math.min(startS + NEW_SEGMENT_SECONDS, limit));
   return endS - startS >= MIN_SEGMENT_SECONDS ? { startS, endS } : null;
 }
+
+/** The selection after removing a segment: kept if another row went, else the neighbour (next, then previous), else none. */
+export function selectAfterRemove(segments: Draft[], removedId: string, selectedId: string | null): string | null {
+  if (removedId !== selectedId) return selectedId;
+  const i = segments.findIndex((x) => x.id === removedId);
+  const rest = segments.filter((x) => x.id !== removedId);
+  return rest[Math.min(i, rest.length - 1)]?.id ?? null;
+}

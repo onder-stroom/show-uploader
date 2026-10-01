@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agendaSlot, formatTimecode, newSegmentAt, parseTimecode } from '../../src/upload/segments';
+import { agendaSlot, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../../src/upload/segments';
 
 describe('timecodes', () => {
   it('formats with tenths, hours only when needed', () => {
@@ -52,5 +52,21 @@ describe('newSegmentAt', () => {
     expect(newSegmentAt(1500, 7200, [{ startS: 1000, endS: 2000 }])).toBeNull();
     expect(newSegmentAt(100, 7200, [{ startS: 110, endS: 500 }])).toBeNull();
     expect(newSegmentAt(7190, 7200, [])).toBeNull();
+  });
+});
+
+describe('selectAfterRemove', () => {
+  const d = (id: string): Draft => ({ id, startS: 0, endS: 60, showId: null });
+  const all = [d('a'), d('b'), d('c')];
+  it('keeps the selection when another row is removed', () => {
+    expect(selectAfterRemove(all, 'a', 'b')).toBe('b');
+    expect(selectAfterRemove(all, 'a', null)).toBeNull();
+  });
+  it('selects the next neighbour, else the previous', () => {
+    expect(selectAfterRemove(all, 'b', 'b')).toBe('c');
+    expect(selectAfterRemove(all, 'c', 'c')).toBe('b');
+  });
+  it('selects nothing when the last row goes', () => {
+    expect(selectAfterRemove([d('a')], 'a', 'a')).toBeNull();
   });
 });

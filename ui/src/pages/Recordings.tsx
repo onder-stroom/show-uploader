@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import ButtonBase from '@mui/material/ButtonBase';
 import IconButton from '@mui/material/IconButton';
 import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
@@ -19,7 +20,7 @@ import { PageLoading } from '../components/Skeleton';
 import { TrimBar, ZOOM_LEVELS } from '../components/TrimBar';
 import { toWaveform } from '../components/WaveformPath';
 import { resolveSegment, type CutStatusView, type SegmentStatus } from '../upload/resolveSegment';
-import { agendaSlot, formatTimecode, newSegmentAt, parseTimecode, type Draft } from '../upload/segments';
+import { agendaSlot, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../upload/segments';
 
 // The PC's clock is Brussels, and so is everyone reading this page.
 // A cut in these states is being made from the times as they were: editing them now would
@@ -158,10 +159,8 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
 
   // Removing the selected segment selects its neighbour (the next one, else the previous).
   const remove = (id: string) => {
-    const i = segments.findIndex((x) => x.id === id);
-    const rest = segments.filter((x) => x.id !== id);
-    setSegments(rest);
-    if (id === selectedId) setSelectedId(rest[Math.min(i, rest.length - 1)]?.id ?? null);
+    setSelectedId(selectAfterRemove(segments, id, selectedId));
+    setSegments(segments.filter((x) => x.id !== id));
   };
 
   const submit = () =>
@@ -269,20 +268,32 @@ function SegmentRow(props: {
 
   return (
     <Stack
-      spacing={0.5} onClick={props.onSelect}
+      spacing={0.5}
+      // A mouse convenience only; the number button below is the keyboard route. Clicks that come
+      // from a control (or its portalled menu) are that control's business, not a row selection.
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('button, input, textarea, [role="combobox"], [role="option"], [role="listbox"]')) return;
+        props.onSelect();
+      }}
       sx={{
         p: 1.5, cursor: 'pointer', backgroundColor: props.selected ? c.linkSoft : c.surface,
         border: `1px solid ${props.problem ? c.danger : props.selected ? c.link : c.border}`,
       }}
     >
       <Stack direction="row" spacing={1} useFlexGap sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
-        <Typography sx={{ width: 20, fontWeight: 700 }}>{index + 1}</Typography>
-        <TimeField label="in" disabled={locked} value={draft.startS} onCommit={(s) => props.onChange({ startS: s })} />
-        <Button size="small" disabled={locked} onClick={() => props.onChange({ startS: props.playhead })}>← playhead</Button>
-        <TimeField label="out" disabled={locked} value={draft.endS} onCommit={(s) => props.onChange({ endS: s })} />
-        <Button size="small" disabled={locked} onClick={() => props.onChange({ endS: props.playhead })}>← playhead</Button>
+        <ButtonBase
+          aria-label={`select segment ${index + 1}`} aria-pressed={props.selected} onClick={props.onSelect}
+          sx={{ width: 28, height: 28, fontWeight: 700, border: `1px solid ${props.selected ? c.link : c.line}` }}
+        >
+          {index + 1}
+        </ButtonBase>
+        <TimeField label="in" disabled={locked} onFocus={props.onSelect} value={draft.startS} onCommit={(s) => props.onChange({ startS: s })} />
+        <Button size="small" disabled={locked} onClick={() => { props.onSelect(); props.onChange({ startS: props.playhead }); }}>← playhead</Button>
+        <TimeField label="out" disabled={locked} onFocus={props.onSelect} value={draft.endS} onCommit={(s) => props.onChange({ endS: s })} />
+        <Button size="small" disabled={locked} onClick={() => { props.onSelect(); props.onChange({ endS: props.playhead }); }}>← playhead</Button>
         <Select
           size="small" displayEmpty value={draft.showId ?? ''} sx={{ minWidth: 220, flex: 1 }}
+          disabled={locked} onOpen={props.onSelect}
           onChange={(e) => props.onChange({ showId: e.target.value || null })}
         >
           <MenuItem value=""><em>choose the show…</em></MenuItem>
@@ -293,7 +304,7 @@ function SegmentRow(props: {
         <Typography variant="caption" sx={{ minWidth: 150, color: status.state === 'failed' ? c.danger : c.muted }}>
           {statusLabel(status)}
         </Typography>
-        <Button size="small" onClick={props.onRemove} disabled={['queued', 'cutting', 'uploading', 'finishing'].includes(status.state)}>
+        <Button size="small" disabled={locked} onClick={(e) => { e.stopPropagation(); props.onRemove(); }}>
           remove
         </Button>
       </Stack>
@@ -319,12 +330,12 @@ function statusLabel(s: SegmentStatus): string {
   }
 }
 
-function TimeField({ label, value, disabled, onCommit }: { label: string; value: number; disabled: boolean; onCommit(s: number): void }) {
+function TimeField({ label, value, disabled, onFocus, onCommit }: { label: string; value: number; disabled: boolean; onFocus(): void; onCommit(s: number): void }) {
   const [text, setText] = useState(formatTimecode(value));
   useEffect(() => setText(formatTimecode(value)), [value]);
   return (
     <TextField
-      size="small" label={label} value={text} disabled={disabled} sx={{ width: 130 }}
+      size="small" label={label} value={text} disabled={disabled} onFocus={onFocus} sx={{ width: 130 }}
       onChange={(e) => setText(e.target.value)}
       onBlur={() => {
         // Untouched text must not re-commit: a value set by dragging would be rounded to the displayed 0.1s.
