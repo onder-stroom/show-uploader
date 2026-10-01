@@ -5,6 +5,10 @@ import type { WorkerDeps } from '../ports';
 type Deps = Pick<WorkerDeps, 'agent' | 'sessions' | 'config'>;
 type Opts = { sleep?: (ms: number) => Promise<void>; now?: () => number };
 
+// Polls may fail (a network blip, the client's own timeout) without the wait ending: give
+// up only when they have failed continuously for this long.
+const POLL_FAILURE_LIMIT_MS = 5 * 60_000;
+
 const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 // BullMQ counts finished attempts in attemptsMade, so this is the last one when one
@@ -30,16 +34,34 @@ export async function processCutRecording(job: Job<CutJobPayload>, { agent, sess
   const step = (s: CutStep) => job.updateProgress({ step: s });
 
   // Poll until `done` holds. A failed upload or a vanished recording ends the wait.
-  async function waitFor(first: AgentCut, done: (c: AgentCut) => boolean, timeoutMs: number, what: string): Promise<AgentCut> {
+  // `resume` is for a PC that forgot it was uploading (restart): when a poll sees state
+  // `cut` it is asked to upload again.
+  async function waitFor(
+    first: AgentCut,
+    done: (c: AgentCut) => boolean,
+    timeoutMs: number,
+    what: string,
+    resume?: () => Promise<AgentCut>
+  ): Promise<AgentCut> {
     const deadline = now() + timeoutMs;
     let current = first;
+    let failingSince: number | null = null;
     for (;;) {
       if (current.state === 'source_gone') throw new UnrecoverableError(current.reason ?? 'The recording was deleted from the PC');
       if (done(current)) return current;
       if (current.state === 'failed') throw new Error(current.reason ?? 'The PC reported a failure');
       if (now() > deadline) throw new Error(`Timed out waiting for ${what}`);
       await sleep(config.cutPoll.intervalMs);
-      const next = await agent.cut(cutId);
+      let next: AgentCut | null;
+      try {
+        next = await agent.cut(cutId);
+        if (next && resume && next.state === 'cut') next = await resume();
+        failingSince = null;
+      } catch (err) {
+        failingSince ??= now();
+        if (now() - failingSince > POLL_FAILURE_LIMIT_MS) throw err;
+        continue;
+      }
       if (!next) throw new Error('The recordings service has no record of this cut');
       current = next;
     }
@@ -67,9 +89,10 @@ export async function processCutRecording(job: Job<CutJobPayload>, { agent, sess
 
     if (!opened.completed) {
       await step('uploading');
-      const started = ready.state === 'done' ? ready : await agent.upload(cutId, { partSize: opened.partSize, parts: opened.parts });
+      const startUpload = () => agent.upload(cutId, { partSize: opened.partSize, parts: opened.parts });
+      const started = ready.state === 'done' ? ready : await startUpload();
       // A failure here is an upload failure, never "resumable": the wait must throw.
-      await waitFor(started, (c) => c.state === 'done', config.cutPoll.uploadTimeoutMs, 'the upload');
+      await waitFor(started, (c) => c.state === 'done', config.cutPoll.uploadTimeoutMs, 'the upload', startUpload);
       await step('finishing');
       await sessions.complete(sessionId);
     }

@@ -106,4 +106,57 @@ describe('processCutRecording', () => {
     let t = 0;
     await expect(run(deps, fakeJob(payload), () => (t += 600))).rejects.toThrow(/timed out/i);
   });
+
+  describe('polling', () => {
+    const uploading = () => cut({ state: 'uploading' });
+
+    it('a failed poll does not end the wait: it keeps polling and completes', async () => {
+      const deps = fakeDeps();
+      deps.agent.upload.mockResolvedValueOnce(uploading());
+      deps.agent.cut
+        .mockResolvedValueOnce(null) // the initial lookup: no cut yet
+        .mockRejectedValueOnce(new Error('fetch failed'))
+        .mockResolvedValueOnce(cut({ state: 'done' }));
+      await expect(run(deps)).resolves.toBe(payload.filename);
+      expect(deps.sessions.complete).toHaveBeenCalledTimes(1);
+    });
+
+    it('polls that keep failing for minutes fail the attempt, aborting nothing before the last one', async () => {
+      const deps = fakeDeps();
+      deps.config.cutPoll.uploadTimeoutMs = 10 * 60 * 60_000;
+      deps.agent.upload.mockResolvedValueOnce(uploading());
+      deps.agent.cut.mockResolvedValueOnce(null).mockRejectedValue(new Error('fetch failed'));
+      let t = 0;
+      await expect(run(deps, fakeJob(payload, 'bull-1', { attempts: 3, attemptsMade: 0 }), () => (t += 60_000))).rejects.toThrow('fetch failed');
+      expect(deps.sessions.abort).not.toHaveBeenCalled();
+      expect(deps.agent.drop).not.toHaveBeenCalled();
+    });
+
+    it('a success resets the failure run', async () => {
+      const deps = fakeDeps();
+      deps.config.cutPoll.uploadTimeoutMs = 10 * 60 * 60_000;
+      deps.agent.upload.mockResolvedValueOnce(uploading());
+      const fail = new Error('fetch failed');
+      deps.agent.cut
+        .mockResolvedValueOnce(null)
+        .mockRejectedValueOnce(fail).mockRejectedValueOnce(fail).mockRejectedValueOnce(fail)
+        .mockResolvedValueOnce(uploading())
+        .mockRejectedValueOnce(fail).mockRejectedValueOnce(fail).mockRejectedValueOnce(fail)
+        .mockResolvedValueOnce(cut({ state: 'done' }));
+      let t = 0;
+      await expect(run(deps, fakeJob(payload), () => (t += 60_000))).resolves.toBe(payload.filename);
+    });
+
+    it('a PC that forgot it was uploading (state cut) is asked to upload again with the same parts', async () => {
+      const deps = fakeDeps();
+      deps.agent.upload.mockResolvedValueOnce(uploading()).mockResolvedValueOnce(uploading());
+      deps.agent.cut
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(cut({ state: 'cut' }))
+        .mockResolvedValueOnce(cut({ state: 'done' }));
+      await expect(run(deps)).resolves.toBe(payload.filename);
+      expect(deps.agent.upload).toHaveBeenCalledTimes(2);
+      expect(deps.agent.upload.mock.calls[1]).toEqual(deps.agent.upload.mock.calls[0]);
+    });
+  });
 });

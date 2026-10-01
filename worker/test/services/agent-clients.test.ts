@@ -46,6 +46,11 @@ describe('recordings agent client', () => {
     expect(out).toMatchObject({ state: 'source_gone', reason: expect.stringMatching(/deleted/) });
   });
 
+  it('any other 404 on start (wrong URL, proxy) is a failed request, not source_gone', async () => {
+    const baseUrl = await serve(404, { error: 'Not found' });
+    await expect(createRecordingsAgent({ baseUrl, token }).startCut(req)).rejects.toThrow(/404/);
+  });
+
   it('reads a cut, null when the PC has no record', async () => {
     expect(await createRecordingsAgent({ baseUrl: await serve(404), token }).cut('c1')).toBeNull();
   });

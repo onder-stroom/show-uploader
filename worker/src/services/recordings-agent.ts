@@ -25,8 +25,11 @@ export function createRecordingsAgent(o: { baseUrl?: string; token?: string }): 
   return {
     async startCut(req) {
       const res = await call('POST', '/cuts', req);
-      // The PC does not know this recording any more: the operator deleted it.
+      // The PC does not know this recording any more: the operator deleted it. Any other
+      // 404 (a wrong URL, a proxy) is just a failed request.
       if (res.status === 404) {
+        const code = ((await res.clone().json().catch(() => null)) as { code?: string } | null)?.code;
+        if (code !== 'UNKNOWN_RECORDING') return parse(res, 'Starting the cut');
         return { cutId: req.cutId, state: 'source_gone', sizeBytes: null, etags: null, reason: 'The recording was deleted from the PC' };
       }
       return parse(res, 'Starting the cut');
