@@ -20,7 +20,7 @@ import { PageLoading } from '../components/Skeleton';
 import { TrimBar, ZOOM_LEVELS } from '../components/TrimBar';
 import { toWaveform } from '../components/WaveformPath';
 import { resolveSegment, type CutStatusView, type SegmentStatus } from '../upload/resolveSegment';
-import { agendaSlot, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../upload/segments';
+import { agendaSlot, editorNote, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../upload/segments';
 
 // The PC's clock is Brussels, and so is everyone reading this page.
 // A cut in these states is being made from the times as they were: editing them now would
@@ -32,10 +32,12 @@ const brussels = new Intl.DateTimeFormat('nl-BE', { timeZone: 'Europe/Brussels',
 
 export default function Recordings() {
   const q = useRecordings();
-  const [ref, setRef] = useState<string | null>(null);
+  // The opened recording itself, not a ref looked up in the latest list: one poll that
+  // fails or lacks it must not unmount the editor and lose the operator's drafts.
+  const [opened, setOpened] = useState<AgentRecording | null>(null);
 
-  if (q.isPending) return <PageLoading label="asking the OBS PC…" />;
-  if (q.isError) {
+  if (!opened && q.isPending) return <PageLoading label="asking the OBS PC…" />;
+  if (!opened && q.isError) {
     return (
       <Typography variant="body2" sx={{ color: c.danger }}>
         could not read recordings: {q.error.message}
@@ -53,7 +55,7 @@ export default function Recordings() {
   );
 
   // Off, or off the tailnet. Normal, not an error: nothing already uploaded is affected.
-  if (!q.data.reachable) {
+  if (!opened && !q.data?.reachable) {
     return (
       <Stack spacing={3}>
         {header}
@@ -64,18 +66,22 @@ export default function Recordings() {
     );
   }
 
-  const selected = q.data.recordings.find((r) => r.ref === ref) ?? null;
+  const list = q.data?.reachable ? q.data.recordings : [];
+  const note = opened ? editorNote(q.data, opened.ref) : null;
   return (
     <Stack spacing={4}>
       {header}
-      {selected ? (
-        <Editor key={selected.ref} recording={selected} onClose={() => setRef(null)} />
+      {opened ? (
+        <>
+          {note && <Typography variant="body2" color="text.secondary">{note}</Typography>}
+          <Editor key={opened.ref} recording={opened} onClose={() => setOpened(null)} />
+        </>
       ) : (
         <Stack spacing={1.5}>
-          {q.data.recordings.length === 0 && (
+          {list.length === 0 && (
             <Typography variant="body2" color="text.secondary">no recordings on the OBS PC.</Typography>
           )}
-          {q.data.recordings.map((r) => (
+          {list.map((r) => (
             <Stack
               key={r.ref} direction="row" spacing={2}
               sx={{ alignItems: 'center', p: 1.5, backgroundColor: c.surface, border: `1px solid ${c.border}` }}
@@ -88,7 +94,7 @@ export default function Recordings() {
                   {r.state === 'failed' && ' · could not be prepared'}
                 </Typography>
               </Box>
-              <Button size="small" variant="outlined" disabled={r.state !== 'ready'} onClick={() => setRef(r.ref)}>
+              <Button size="small" variant="outlined" disabled={r.state !== 'ready'} onClick={() => setOpened(r)}>
                 open
               </Button>
             </Stack>

@@ -15,7 +15,9 @@ export type SegmentStatus =
 
 /**
  * The single, pure rule for "where is this segment?". Like resolveVideo it derives from
- * server truth and stores nothing, so navigating away or refreshing cannot lose it.
+ * server truth and stores nothing. What survives a refresh is the staged video, once the cut
+ * has put one on the show. The in-flight cut status does not: the editor keeps the cut ids in
+ * component state (`cutByShow`), so a refresh forgets them until the show shows a staged video.
  *
  * `staged` must already be the video that belongs to THIS segment (its filename matches
  * the cut's), otherwise an unrelated earlier upload would make a draft look ready.

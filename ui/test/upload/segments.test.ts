@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agendaSlot, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../../src/upload/segments';
+import { agendaSlot, editorNote, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../../src/upload/segments';
 
 describe('timecodes', () => {
   it('formats with tenths, hours only when needed', () => {
@@ -68,5 +68,17 @@ describe('selectAfterRemove', () => {
   });
   it('selects nothing when the last row goes', () => {
     expect(selectAfterRemove([d('a')], 'a', 'a')).toBeNull();
+  });
+});
+
+describe('editorNote', () => {
+  const list = { reachable: true, recordings: [{ ref: 'r1' }] };
+  it('is silent while the opened recording is listed', () => {
+    expect(editorNote(list, 'r1')).toBeNull();
+    expect(editorNote(undefined, 'r1')).toBeNull();
+  });
+  it('says so, without dropping the editor, when the PC is unreachable or the recording is not listed', () => {
+    expect(editorNote({ reachable: false }, 'r1')).toMatch(/not reachable/);
+    expect(editorNote(list, 'gone')).toMatch(/no longer listed/);
   });
 });

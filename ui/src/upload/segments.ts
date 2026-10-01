@@ -61,3 +61,14 @@ export function selectAfterRemove(segments: Draft[], removedId: string, selected
   const rest = segments.filter((x) => x.id !== removedId);
   return rest[Math.min(i, rest.length - 1)]?.id ?? null;
 }
+
+/**
+ * Why the opened recording may not be current: the PC is off the tailnet for one 15 s poll,
+ * or the list briefly lacks it. The editor stays up either way (it holds the operator's work).
+ */
+export function editorNote(list: { reachable: boolean; recordings?: { ref: string }[] } | undefined, ref: string): string | null {
+  if (!list) return null;
+  if (!list.reachable) return 'the OBS PC is not reachable right now. your segments are kept.';
+  if (!list.recordings?.some((r) => r.ref === ref)) return 'this recording is no longer listed on the OBS PC. your segments are kept.';
+  return null;
+}
