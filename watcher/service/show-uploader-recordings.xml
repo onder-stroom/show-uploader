@@ -1,0 +1,18 @@
+<!-- watcher/service/show-uploader-recordings.xml
+     WinSW (https://github.com/winsw/winsw) service definition. Rename the WinSW exe to
+     show-uploader-recordings.exe and keep this file next to it. Edit the two paths. -->
+<service>
+  <id>ShowUploaderRecordings</id>
+  <name>Show Uploader Recordings</name>
+  <description>Prepares OBS recordings and cuts per-artist segments for the uploader.</description>
+  <executable>C:\Program Files\nodejs\node.exe</executable>
+  <arguments>dist\index.js</arguments>
+  <workingdirectory>C:\show-uploader\watcher</workingdirectory>
+  <startmode>Automatic</startmode>
+  <priority>BelowNormal</priority>
+  <onfailure action="restart" delay="10 sec"/>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+</service>
