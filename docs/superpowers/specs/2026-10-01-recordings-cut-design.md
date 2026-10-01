@@ -107,9 +107,14 @@ Owns files, ffmpeg and the upload of parts. Nothing else.
     (complete the S3 object and upsert `staged_uploads[show_id]` atomically).
 - **Router** `trpc/routers/recordings.ts`: thin; validates input, calls the use case,
   maps `UseCaseError`.
-- **REST** (streaming, which tRPC cannot do): `GET /api/recordings/:ref/preview` proxies
-  the agent's preview with Range support; `GET /api/recordings/:ref/peaks`. Both under
-  `requireAuth`. The api never returns a signed URL for these.
+- **REST** (streaming, which tRPC cannot do): `GET /api/recordings/preview/:ref` proxies
+  the agent's preview with Range support. A `<video>` element cannot send an
+  `Authorization` header, so the route is authenticated by a short-lived signed token
+  (a JWT signed with `jose`, already an api dependency) in the query (`t`), not by `requireAuth`.
+  The token is issued by the tRPC
+  query `recordings.signPreview({ref})`, keyed by recording like `storage.signObject`, so
+  it is fetched once per viewing session and the `<video src>` never swaps. Waveform peaks
+  are a plain tRPC query, `recordings.peaks({ref})`.
 - **Internal endpoints** under the existing key-gated pattern the worker already uses
   for PocketBase write-back: open a multipart session bound to a show (size known),
   complete it (calls `completeUpload`), abort it.
@@ -166,17 +171,22 @@ backoff; a restart of the service resumes from the staged cut and the part list.
 No new table. The lifecycle rule holds: the show record is the single source of truth.
 
 - `multipart_uploads` (existing, already bound to `show_id`) gains nullable provenance
-  columns: `source_ref`, `cut_start_s`, `cut_end_s`. Audit and retry only.
+  columns: `source_ref`, `cut_id`, `cut_start_s`, `cut_end_s`. Audit and retry only. A
+  partial unique index on `cut_id` (where the session is not aborted) gives one live
+  session per cut, so a retried request reuses it instead of opening a second S3 upload.
 - `staged_uploads[show_id]` is written by `completeUpload`, exactly as today.
 - Failure states (`failed`, `source_gone`) are reported by the agent and the job and are
   derived in the UI, not stored.
 
 ## Retention
 
-The PC prunes a recording after every segment cut from it has been archived **and** a
-grace period (default 7 days, configurable) has passed. Pruning is an optimisation, not
-a guarantee: the operator may delete earlier, and the system never depends on a file
-still existing.
+The PC prunes a recording once at least one segment cut from it has uploaded
+successfully **and** the retention period (default 14 days, `RETENTION_DAYS`) has
+passed since the most recent successful cut upload. The PC has no credentials for the
+api, so it cannot observe archival; "uploaded plus a grace period" is the rule it can
+enforce. A recording that was never cut is never pruned automatically. Pruning is an
+optimisation, not a guarantee: the operator may delete earlier, and the system never
+depends on a file still existing.
 
 ## Failure handling
 
