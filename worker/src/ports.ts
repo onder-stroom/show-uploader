@@ -8,6 +8,7 @@
  * ffmpeg and the scratch workspace are deliberately NOT ports: they are local
  * tools on this box, not systems the jobs talk to, so the jobs import them.
  */
+import type { AgentCut, CutRequest, UploadRequest } from '@show-uploader/domain';
 import type { JobPayload } from './types';
 
 export type MediaLink = { label: string; type: string; url: string };
@@ -78,10 +79,34 @@ export interface MixcloudUploader {
   }): Promise<string>;
 }
 
+/** The recordings service on the OBS PC, reached over Tailscale. */
+export interface RecordingsAgent {
+  /** Start a cut. Idempotent per cutId; a deleted recording comes back as `source_gone`. */
+  startCut(req: CutRequest): Promise<AgentCut>;
+  /** The cut's state, or null when the PC has no record of it. */
+  cut(cutId: string): Promise<AgentCut | null>;
+  /** Have the PC upload the cut to these presigned part URLs (resumes finished parts). */
+  upload(cutId: string, req: UploadRequest): Promise<AgentCut>;
+  /** Drop the PC's staging file and record. Never throws. */
+  drop(cutId: string): Promise<void>;
+}
+
+/** The api's upload sessions for cuts. The api owns completion; the worker only asks. */
+export interface UploadSessions {
+  /** Idempotent per cut: a retried job gets the same session back. */
+  open(input: {
+    cutId: string; showId: string; filename: string; size: number; ref: string; startS: number; endS: number;
+  }): Promise<{ sessionId: string; partSize: number; parts: { n: number; url: string }[]; completed: boolean }>;
+  complete(sessionId: string): Promise<void>;
+  abort(sessionId: string): Promise<void>;
+}
+
 /** Deployment settings the jobs read. */
 export type WorkerConfig = {
   /** Public origin of this app, for permanent archive links. Null disables them. */
   appPublicUrl: string | null;
+  /** How the cut-recording job waits on the PC. */
+  cutPoll: { intervalMs: number; cutTimeoutMs: number; uploadTimeoutMs: number };
 };
 
 export type WorkerDeps = {
@@ -91,5 +116,7 @@ export type WorkerDeps = {
   platformQueue: PlatformQueue;
   youtube: YoutubeUploader;
   mixcloud: MixcloudUploader;
+  agent: RecordingsAgent;
+  sessions: UploadSessions;
   config: WorkerConfig;
 };

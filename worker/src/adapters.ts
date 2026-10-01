@@ -17,6 +17,8 @@ import { deleteFromS3, downloadFromS3, objectSize, uploadToS3 } from './services
 import { finalizeArchiveRecord } from './services/shows-api';
 import { uploadToMixcloud } from './services/mixcloud-client';
 import { uploadToYoutube } from './services/youtube-client';
+import { createRecordingsAgent } from './services/recordings-agent';
+import { createUploadSessions } from './services/upload-sessions';
 import type { WorkerDeps } from './ports';
 
 export function createDeps(): WorkerDeps {
@@ -67,6 +69,11 @@ export function createDeps(): WorkerDeps {
     },
     youtube: { upload: (input) => uploadToYoutube(input) },
     mixcloud: { upload: (input) => uploadToMixcloud(input) },
-    config: { appPublicUrl: env.APP_PUBLIC_URL ?? null },
+    agent: createRecordingsAgent({ baseUrl: env.RECORDINGS_AGENT_URL, token: env.RECORDINGS_AGENT_TOKEN }),
+    sessions: createUploadSessions({ baseUrl: env.INTERNAL_API_URL, apiKey: env.WATCHER_API_KEY }),
+    config: {
+      appPublicUrl: env.APP_PUBLIC_URL ?? null,
+      cutPoll: { intervalMs: env.CUT_POLL_INTERVAL_MS, cutTimeoutMs: env.CUT_WAIT_MS, uploadTimeoutMs: env.UPLOAD_WAIT_MS },
+    },
   };
 }
