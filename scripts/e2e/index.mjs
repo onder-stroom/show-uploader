@@ -8,15 +8,15 @@
 import { execFileSync } from 'child_process';
 import { ROOT, stackDown, stackUp } from './lib.mjs';
 
-const only = process.argv[2]; // 'worker' | 'api', default both
+const only = process.argv[2]; // 'worker' | 'api' | 'recordings', default all
 
 if (process.argv.includes('--help')) {
-  console.log('usage: pnpm e2e [worker|api] [--keep]\n  --keep  leave the containers running for inspection');
+  console.log('usage: pnpm e2e [worker|api|recordings] [--keep]\n  --keep  leave the containers running for inspection');
   process.exit(0);
 }
 
 console.log('building…');
-execFileSync('pnpm', ['--filter', '@show-uploader/api', '--filter', '@show-uploader/worker', 'build'], {
+execFileSync('pnpm', ['--filter', '@show-uploader/api', '--filter', '@show-uploader/worker', '--filter', '@show-uploader/watcher', 'build'], {
   cwd: ROOT,
   stdio: 'inherit',
 });
@@ -26,12 +26,17 @@ await stackUp();
 
 let failed = 0;
 try {
-  if (only !== 'api') {
+  if (!only || only === 'worker') {
     const { run } = await import('./worker.mjs');
     failed += await run();
   }
-  if (only !== 'worker') {
+  if (!only || only === 'api') {
     const { run } = await import('./api.mjs');
+    failed += await run();
+  }
+  // Last: it needs the stub api port (13999) the other suites have released by now.
+  if (!only || only === 'recordings') {
+    const { run } = await import('./recordings.mjs');
     failed += await run();
   }
 } finally {
