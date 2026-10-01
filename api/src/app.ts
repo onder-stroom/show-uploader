@@ -12,6 +12,9 @@ import { requireAuth } from './middleware/requireAuth';
 import { createExpressMiddleware } from '@trpc/server/adapters/express';
 import { appRouter } from './trpc/root';
 import { createContext } from './trpc/trpc';
+import { deps } from './deps';
+import { env } from './env';
+import { createInternalRecordingsRouter, createPreviewRouter } from './routes/recordings';
 
 export function createApp() {
   const app = express();
@@ -20,6 +23,11 @@ export function createApp() {
 
   // Watcher uses its own API key — exempt from JWT auth
   app.use('/api/watcher', watcherRouter);
+  // The worker's cut-recording job (shared internal key, like the watcher routes) …
+  app.use('/api/internal/recordings', createInternalRecordingsRouter(deps, env.WATCHER_API_KEY));
+  // … and the OBS PC preview stream, authenticated by a signature in its query because
+  // a <video> element cannot send an Authorization header.
+  app.use('/api/recordings', createPreviewRouter(deps));
 
   // Deliberately unauthenticated: these are the permanent links stored on the
   // public agenda records, so they are fetched by browsers with no session. They

@@ -4,6 +4,7 @@ import { uploadsRouter } from './routers/uploads';
 import { platformRouter } from './routers/platform';
 import { watcherRouter } from './routers/watcher';
 import { storageRouter } from './routers/storage';
+import { recordingsRouter } from './routers/recordings';
 
 // The app's API. Only what tRPC's batch link can't carry stays REST (see
 // app.ts): multipart upload, raw cover bytes, the SSE streams (events,
@@ -15,6 +16,7 @@ export const appRouter = router({
   platform: platformRouter,
   watcher: watcherRouter,
   storage: storageRouter,
+  recordings: recordingsRouter,
 });
 
 export type AppRouter = typeof appRouter;
