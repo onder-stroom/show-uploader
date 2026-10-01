@@ -40,9 +40,14 @@ function makeNight(file) {
   return hevc ? 'hevc' : 'h264';
 }
 
+// One "sample_rate,channels" line per audio stream. Track 1 is the only mono 44.1 kHz one.
 const audioStreams = (file) =>
-  execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index', '-of', 'csv=p=0', file])
-    .toString().trim().split('\n').filter(Boolean).length;
+  execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=channels,sample_rate', '-of', 'csv=p=0', file])
+    .toString().trim().split('\n').filter(Boolean);
+const onlyTrackOne = (file) => {
+  const a = audioStreams(file);
+  return a.length === 1 && a[0] === '44100,1';
+};
 
 export async function run() {
   const { check, finish } = reporter('recordings');
@@ -53,12 +58,15 @@ export async function run() {
   const db = await database();
   const worker = startWorker();
   let watcher;
+  let watcherLog = '';
   let internalApi;
 
   const agent = (p, init = {}) =>
     fetch(`http://127.0.0.1:${PORT}/v1${p}`, { ...init, headers: { Authorization: `Bearer ${TOKEN}`, ...(init.headers ?? {}) } });
 
   try {
+    // Stale rows from a kept earlier run; platform_jobs go with their show_uploads (ON DELETE CASCADE).
+    await db`DELETE FROM show_uploads WHERE show_id = ANY(${SHOWS})`;
     await db`DELETE FROM staged_uploads WHERE show_id = ANY(${SHOWS})`;
     await db`DELETE FROM multipart_uploads WHERE show_id = ANY(${SHOWS})`;
 
@@ -71,7 +79,6 @@ export async function run() {
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    let watcherLog = '';
     watcher.stdout.on('data', (d) => (watcherLog += d));
     watcher.stderr.on('data', (d) => (watcherLog += d));
 
@@ -112,7 +119,10 @@ export async function run() {
     app.use('/api/internal/recordings', createInternalRecordingsRouter(deps, env.WATCHER_API_KEY));
     // The worker's archive step writes the agenda links back here.
     app.patch('/api/watcher/shows/:id', (_req, res) => res.json({ ok: true }));
-    internalApi = app.listen(13999);
+    internalApi = await new Promise((resolve, reject) => {
+      const server = app.listen(13999, () => resolve(server));
+      server.on('error', reject);
+    });
 
     // --- cut two segments ---------------------------------------------------------
     const segments = [
@@ -139,11 +149,15 @@ export async function run() {
       const seconds = probeSeconds(file);
       // Spec verification item 1: start AND end exact on a mid-GOP cut (keyframes every 2 s).
       check(`${show}: exactly ${want}s long (start and end exact)`, Math.abs(seconds - want) < 0.3, `${seconds}s`);
-      check(`${show}: only track 1 survived`, audioStreams(file) === 1);
+      check(`${show}: only track 1 (mono, 44.1 kHz) survived`, onlyTrackOne(file), audioStreams(file).join(' | '));
     }
 
-    const [prov] = await db`SELECT cut_id, source_ref, cut_start_s, cut_end_s, status FROM multipart_uploads WHERE show_id = ${SHOWS[1]}`;
-    check('the session records which cut it came from', prov.cut_id === started.cuts[1].cutId && prov.source_ref === rec.ref && prov.cut_start_s === 33.5 && prov.status === 'completed');
+    const provRows = await db`SELECT show_id, cut_id, source_ref, cut_start_s, cut_end_s, status FROM multipart_uploads WHERE show_id = ANY(${SHOWS})`;
+    check('each session records which cut it came from', segments.every((seg, i) => {
+      const p = provRows.find((r) => r.show_id === SHOWS[i]);
+      return p && p.cut_id === started.cuts[i].cutId && p.source_ref === rec.ref
+        && p.cut_start_s === seg.startS && p.cut_end_s === seg.endS && p.status === 'completed';
+    }), JSON.stringify(provRows));
 
     const cleaned = await waitFor('the PC to drop its staging file', async () => (await agent(`/cuts/${started.cuts[0].cutId}`)).status === 404, 30000);
     check('the PC cleaned up after the upload', !!cleaned);
@@ -163,6 +177,11 @@ export async function run() {
     for (const j of jobs) check(`${j.platform} job done on the cut segment`, j.status === 'done', j.error ?? '');
     const [up] = await db`SELECT video_s3_key, duration_seconds FROM show_uploads WHERE id = ${published.uploadId}`;
     check('the archive kept the cut\'s exact length', Math.abs(up.duration_seconds - 30) <= 1, `${up.duration_seconds}s`);
+    const archived = path.join(work, 'archived.mp4');
+    fs.writeFileSync(archived, await store.get(up.video_s3_key));
+    // The archive's loudness pass resamples (96 kHz), so only the stream count and mono are stable.
+    const arch = audioStreams(archived);
+    check('the archived MP4 still holds a single mono audio stream (track 1)', arch.length === 1 && arch[0].endsWith(',1'), arch.join(' | '));
 
     // --- a recording deleted by hand is a plain refusal, and breaks nothing -------
     fs.rmSync(path.join(recDir, NAME));
@@ -180,5 +199,5 @@ export async function run() {
     await db.end({ timeout: 2 });
     fs.rmSync(work, { recursive: true, force: true });
   }
-  return finish(worker.log());
+  return finish(worker.log() + (watcherLog ? `\n--- watcher log (tail) ---\n${watcherLog.slice(-2000)}` : ''));
 }
