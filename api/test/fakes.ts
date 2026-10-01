@@ -1,6 +1,6 @@
 import { vi } from 'vitest';
 import type { PlatformJob } from '../src/db/queries';
-import type { ApiDeps, UploadWithJobs } from '../src/ports';
+import type { ApiDeps, UploadSession, UploadWithJobs } from '../src/ports';
 import type { AgendaShow } from '../src/services/shows-api';
 
 /**
@@ -21,6 +21,8 @@ export function fakeDeps(opts: {
   const objects = new Set(opts.objects ?? []);
   const queued: { kind: string; payload: unknown }[] = [];
   let nextId = 1;
+  const sessionRows = new Map<string, UploadSession>();
+  const staged = new Map<string, { key: string; filename: string; size: number }>();
 
   const deps = {
     uploads: {
@@ -60,6 +62,32 @@ export function fakeDeps(opts: {
       info: vi.fn(async (key: string) => ({ exists: objects.has(key), size: objects.has(key) ? 1 : null })),
       uploadedParts: vi.fn(async () => []),
       findShowFolder: vi.fn(async (show: AgendaShow) => opts.folders?.[show.id] ?? null),
+      createMultipart: vi.fn(async (_key: string, _contentType: string) => 'mpu-1'),
+      presignPart: vi.fn(async (key: string, _uploadId: string, n: number) => `https://s3.test/${key}?part=${n}`),
+      completeMultipart: vi.fn(async (_key: string, _uploadId: string) => {}),
+      abortMultipart: vi.fn(async (_key: string, _uploadId: string) => {}),
+    },
+    sessions: {
+      create: vi.fn(async (d) => {
+        const id = `sess-${nextId++}`;
+        sessionRows.set(id, {
+          id, show_id: d.showId, s3_key: d.key, s3_upload_id: d.s3UploadId, filename: d.filename,
+          size_bytes: String(d.size), content_type: d.contentType, part_size: d.partSize,
+          status: 'in_progress', cut_id: d.cut?.cutId ?? null,
+        });
+        return id;
+      }),
+      get: vi.fn(async (id: string) => sessionRows.get(id) ?? null),
+      findByCutId: vi.fn(
+        async (cutId: string) => [...sessionRows.values()].find((s) => s.cut_id === cutId && s.status !== 'aborted') ?? null
+      ),
+      setStatus: vi.fn(async (id: string, status: 'completed' | 'aborted') => {
+        const s = sessionRows.get(id);
+        if (s) s.status = status;
+      }),
+      stage: vi.fn(async (showId: string, key: string, filename: string, size: number) => {
+        staged.set(showId, { key, filename, size });
+      }),
     },
     agenda: {
       getShow: vi.fn(async (id: string) => shows.get(id) ?? null),
@@ -90,7 +118,7 @@ export function fakeDeps(opts: {
     config: { jingleS3Key: opts.jingleS3Key ?? null },
   } satisfies ApiDeps;
 
-  return { ...deps, rows: uploads, queued };
+  return { ...deps, rows: uploads, queued, sessionRows, staged };
 }
 
 /** An upload row with jobs, archived under shows/ unless overridden. */

@@ -50,6 +50,48 @@ export interface ObjectStore {
   uploadedParts(key: string, uploadId: string): Promise<{ Size?: number }[]>;
   /** The `shows/<folder>/` holding an agenda record's recording, if any. */
   findShowFolder(show: AgendaShow): Promise<string | null>;
+  /** Multipart uploads: start one, presign a part, finish it, abandon it. */
+  createMultipart(key: string, contentType: string): Promise<string>;
+  presignPart(key: string, uploadId: string, partNumber: number): Promise<string>;
+  completeMultipart(key: string, uploadId: string): Promise<void>;
+  abortMultipart(key: string, uploadId: string): Promise<void>;
+}
+
+export type UploadSession = {
+  id: string;
+  show_id: string | null;
+  s3_key: string;
+  s3_upload_id: string;
+  filename: string;
+  size_bytes: string;
+  content_type: string;
+  part_size: number;
+  status: string;
+  /** Set when the session uploads a segment cut from an OBS recording. */
+  cut_id: string | null;
+};
+
+export type NewSession = {
+  showId: string | null;
+  key: string;
+  s3UploadId: string;
+  filename: string;
+  size: number;
+  contentType: string;
+  partSize: number;
+  cut: { cutId: string; ref: string; startS: number; endS: number } | null;
+};
+
+/** Resumable multipart upload sessions, and the staged video they produce. */
+export interface UploadSessions {
+  /** Returns the new session's id. */
+  create(data: NewSession): Promise<string>;
+  get(id: string): Promise<UploadSession | null>;
+  /** The live (not aborted) session for a cut, so a retried request reuses it. */
+  findByCutId(cutId: string): Promise<UploadSession | null>;
+  setStatus(id: string, status: 'completed' | 'aborted'): Promise<void>;
+  /** Record the video as staged for the show; replaces any earlier one. */
+  stage(showId: string, key: string, filename: string, sizeBytes: number): Promise<void>;
 }
 
 /** The agenda: PocketBase archive records and the broadcast schedule. */
@@ -99,6 +141,7 @@ export type ApiConfig = {
 export type ApiDeps = {
   uploads: UploadStore;
   objects: ObjectStore;
+  sessions: UploadSessions;
   agenda: Agenda;
   queue: JobQueue;
   platforms: PlatformMetadata;

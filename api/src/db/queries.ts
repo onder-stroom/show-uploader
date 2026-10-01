@@ -456,3 +456,58 @@ export function getPlatformSyncs(db: Sql, showId: string) {
     SELECT platform, synced_at FROM platform_syncs WHERE show_id = ${showId}
   `;
 }
+
+export type MultipartSession = {
+  id: string;
+  show_id: string | null;
+  s3_key: string;
+  s3_upload_id: string;
+  filename: string;
+  size_bytes: string;
+  content_type: string;
+  part_size: number;
+  status: string;
+  cut_id: string | null;
+};
+
+export async function createMultipartSession(
+  db: Sql,
+  d: {
+    showId: string | null; key: string; s3UploadId: string; filename: string; size: number;
+    contentType: string; partSize: number;
+    cut: { cutId: string; ref: string; startS: number; endS: number } | null;
+  }
+): Promise<string> {
+  const rows = await db<{ id: string }[]>`
+    INSERT INTO multipart_uploads
+      (show_id, s3_key, s3_upload_id, filename, size_bytes, content_type, part_size,
+       source_ref, cut_id, cut_start_s, cut_end_s)
+    VALUES
+      (${d.showId}, ${d.key}, ${d.s3UploadId}, ${d.filename}, ${d.size}, ${d.contentType}, ${d.partSize},
+       ${d.cut?.ref ?? null}, ${d.cut?.cutId ?? null}, ${d.cut?.startS ?? null}, ${d.cut?.endS ?? null})
+    RETURNING id
+  `;
+  return rows[0].id;
+}
+
+export async function getMultipartSession(db: Sql, id: string): Promise<MultipartSession | null> {
+  const rows = await db<MultipartSession[]>`SELECT * FROM multipart_uploads WHERE id = ${id}`;
+  return rows[0] ?? null;
+}
+
+export async function findMultipartSessionByCutId(db: Sql, cutId: string): Promise<MultipartSession | null> {
+  const rows = await db<MultipartSession[]>`
+    SELECT * FROM multipart_uploads
+    WHERE cut_id = ${cutId} AND status <> 'aborted'
+    ORDER BY created_at DESC LIMIT 1
+  `;
+  return rows[0] ?? null;
+}
+
+export async function setMultipartStatus(db: Sql, id: string, status: 'completed' | 'aborted'): Promise<void> {
+  if (status === 'completed') {
+    await db`UPDATE multipart_uploads SET status = 'completed', completed_at = now() WHERE id = ${id}`;
+  } else {
+    await db`UPDATE multipart_uploads SET status = 'aborted' WHERE id = ${id}`;
+  }
+}

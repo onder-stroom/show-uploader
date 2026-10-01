@@ -4,17 +4,22 @@
  */
 import { db } from './db/client';
 import {
+  createMultipartSession,
   createPlatformJob,
   createUpload,
   deleteStagedUpload,
+  findMultipartSessionByCutId,
   getLatestUploadWithJobsForShow,
+  getMultipartSession,
   getUploadWithJobs,
   isPrePublishVideoKey,
   listUploadingSessions,
   listUploadsNeedingRemux,
   releaseClaimForShow,
   resetPlatformJobForRetry,
+  setMultipartStatus,
   updateUploadMetadata,
+  upsertStagedUpload,
 } from './db/queries';
 import { env } from './env';
 import { previewQueue, uploadQueue } from './queue';
@@ -22,7 +27,7 @@ import { enqueueArchiveJob, enqueueCompressJob } from './services/archive-jobs';
 import { getLiveState } from './services/live-guard';
 import { syncMixcloudMetadata, syncYoutubeMetadata } from './services/platform-metadata';
 import { presenceHub } from './services/presence-hub';
-import { listUploadedParts, objectInfo } from './services/s3';
+import { abortMultipart, completeMultipart, createMultipart, listUploadedParts, objectInfo, presignUploadPart } from './services/s3';
 import { findShowFolder } from './services/show-folder';
 import { getArchiveShow, resolveGenreIds, updateArchiveRecord } from './services/shows-api';
 import type { PreviewJobView } from './services/video-preview';
@@ -55,6 +60,19 @@ export function createDeps(): ApiDeps {
       info: objectInfo,
       uploadedParts: listUploadedParts,
       findShowFolder,
+      createMultipart,
+      presignPart: presignUploadPart,
+      completeMultipart,
+      abortMultipart,
+    },
+    sessions: {
+      create: (data) => createMultipartSession(db, data),
+      get: (id) => getMultipartSession(db, id),
+      findByCutId: (cutId) => findMultipartSessionByCutId(db, cutId),
+      setStatus: (id, status) => setMultipartStatus(db, id, status),
+      async stage(showId, key, filename, sizeBytes) {
+        await upsertStagedUpload(db, showId, key, filename, sizeBytes);
+      },
     },
     agenda: {
       getShow: getArchiveShow,

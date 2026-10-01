@@ -1,38 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../db/client';
-import {
-  createMultipart,
-  presignUploadPart,
-  listUploadedParts,
-  completeMultipart,
-  abortMultipart,
-} from '../services/s3';
-import { upsertStagedUpload } from '../db/queries';
-import { incomingKey } from '@show-uploader/domain';
+import { getMultipartSession } from '../db/queries';
+import { listUploadedParts, presignUploadPart } from '../services/s3';
+import { deps } from '../deps';
+import { abortUpload, completeUpload, openUploadSession } from '../usecases/uploads';
+import { sendFailure } from './respond';
 
 export const multipartRouter = Router();
-
-// 16 MiB parts: well above S3's 5 MiB minimum, few enough requests for large
-// files, small enough that a failed part is cheap to retry.
-export const PART_SIZE = 16 * 1024 * 1024;
-
-type Session = {
-  id: string;
-  show_id: string | null;
-  s3_key: string;
-  s3_upload_id: string;
-  filename: string;
-  size_bytes: string;
-  content_type: string;
-  part_size: number;
-  status: string;
-};
-
-async function getSession(id: string): Promise<Session | null> {
-  const rows = await db<Session[]>`SELECT * FROM multipart_uploads WHERE id = ${id}`;
-  return rows[0] ?? null;
-}
 
 const CreateSchema = z.object({
   filename: z.string().min(1),
@@ -48,30 +23,18 @@ const CreateSchema = z.object({
 multipartRouter.post('/create', async (req, res) => {
   const parsed = CreateSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Invalid body' });
-  const { filename, contentType, size, showId } = parsed.data;
-  const key = incomingKey(filename);
   try {
-    const uploadId = await createMultipart(key, contentType);
-    const rows = await db<{ id: string }[]>`
-      INSERT INTO multipart_uploads (show_id, s3_key, s3_upload_id, filename, size_bytes, content_type, part_size)
-      VALUES (${showId ?? null}, ${key}, ${uploadId}, ${filename}, ${size}, ${contentType}, ${PART_SIZE})
-      RETURNING id
-    `;
-    res.status(201).json({
-      sessionId: rows[0].id,
-      key,
-      partSize: PART_SIZE,
-      partCount: Math.max(1, Math.ceil(size / PART_SIZE)),
-    });
+    const { filename, contentType, size, showId } = parsed.data;
+    const out = await openUploadSession({ filename, contentType, size, showId: showId ?? null }, deps);
+    res.status(201).json(out);
   } catch (err) {
-    console.error('multipart create failed:', err);
-    res.status(500).json({ error: 'Failed to start multipart upload' });
+    sendFailure(res, err, 'multipart create failed:', 'Failed to start multipart upload');
   }
 });
 
 // Resume info: which part numbers already landed (server is source of truth).
 multipartRouter.get('/:sessionId', async (req, res) => {
-  const s = await getSession(req.params.sessionId);
+  const s = await getMultipartSession(db, req.params.sessionId);
   if (!s) return res.status(404).json({ error: 'Unknown session' });
   try {
     const parts = s.status === 'in_progress' ? await listUploadedParts(s.s3_key, s.s3_upload_id) : [];
@@ -97,48 +60,29 @@ multipartRouter.post('/:sessionId/part/:n', async (req, res) => {
   if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > 10000) {
     return res.status(400).json({ error: 'Invalid part number' });
   }
-  const s = await getSession(req.params.sessionId);
+  const s = await getMultipartSession(db, req.params.sessionId);
   if (!s || s.status !== 'in_progress') return res.status(404).json({ error: 'Session not open' });
   try {
-    const url = await presignUploadPart(s.s3_key, s.s3_upload_id, partNumber);
-    res.json({ url });
+    res.json({ url: await presignUploadPart(s.s3_key, s.s3_upload_id, partNumber) });
   } catch (err) {
     console.error('presign part failed:', err);
     res.status(500).json({ error: 'Failed to presign part' });
   }
 });
 
-// Finish: server gathers ETags via ListParts, completes the object, and — the
-// key robustness point — records the staged video against the show ATOMICALLY
-// here. The show record therefore always knows it has a video the instant the
-// upload finishes, independent of the client (navigation, refresh, a crash).
 multipartRouter.post('/:sessionId/complete', async (req, res) => {
-  const s = await getSession(req.params.sessionId);
-  if (!s) return res.status(404).json({ error: 'Unknown session' });
-  if (s.status === 'completed') return res.json({ key: s.s3_key });
   try {
-    await completeMultipart(s.s3_key, s.s3_upload_id);
-    await db`UPDATE multipart_uploads SET status = 'completed', completed_at = now() WHERE id = ${s.id}`;
-    if (s.show_id) {
-      await upsertStagedUpload(db, s.show_id, s.s3_key, s.filename, Number(s.size_bytes));
-    }
-    res.json({ key: s.s3_key });
+    res.json(await completeUpload(req.params.sessionId, deps));
   } catch (err) {
-    console.error('multipart complete failed:', err);
-    res.status(500).json({ error: 'Failed to complete upload' });
+    sendFailure(res, err, 'multipart complete failed:', 'Failed to complete upload');
   }
 });
 
-// Cancel: abort the S3 upload and mark the session.
 multipartRouter.post('/:sessionId/abort', async (req, res) => {
-  const s = await getSession(req.params.sessionId);
-  if (!s) return res.status(404).json({ error: 'Unknown session' });
   try {
-    if (s.status === 'in_progress') await abortMultipart(s.s3_key, s.s3_upload_id);
-    await db`UPDATE multipart_uploads SET status = 'aborted' WHERE id = ${s.id}`;
+    await abortUpload(req.params.sessionId, deps);
     res.json({ ok: true });
   } catch (err) {
-    console.error('multipart abort failed:', err);
-    res.status(500).json({ error: 'Failed to abort upload' });
+    sendFailure(res, err, 'multipart abort failed:', 'Failed to abort upload');
   }
 });
