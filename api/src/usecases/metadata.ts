@@ -1,4 +1,4 @@
-import { baseTitle } from '@show-uploader/domain';
+import { baseTitle, platformTags, strandOfTitle } from '@show-uploader/domain';
 import type { ApiDeps, MetadataEdit } from '../ports';
 import { UseCaseError } from './errors';
 
@@ -23,9 +23,12 @@ export async function updateMetadata(
   const yt = upload.jobs.find((j) => j.platform === 'youtube' && j.status === 'done' && j.result_url);
   const mc = upload.jobs.find((j) => j.platform === 'mixcloud' && j.status === 'done' && j.result_url);
 
+  // The platforms get the title's strand as their first tag; PocketBase's genres (below) never do.
+  const platformEdit = { ...edit, tags: platformTags(edit.tags, strandOfTitle(edit.title)) };
+
   const [ytErr, mcErr] = await Promise.all([
-    yt ? platforms.syncYoutube(yt.result_url!, edit) : Promise.resolve<string | null>(null),
-    mc ? platforms.syncMixcloud(mc.result_url!, edit) : Promise.resolve<string | null>(null),
+    yt ? platforms.syncYoutube(yt.result_url!, platformEdit) : Promise.resolve<string | null>(null),
+    mc ? platforms.syncMixcloud(mc.result_url!, platformEdit) : Promise.resolve<string | null>(null),
   ]);
   if (yt) sync.youtube = ytErr ?? 'ok';
   if (mc) sync.mixcloud = mcErr ?? 'ok';

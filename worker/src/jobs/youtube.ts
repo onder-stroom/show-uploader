@@ -2,7 +2,7 @@ import type { Job } from 'bullmq';
 import type { JobPayload } from '../types';
 import type { WorkerDeps } from '../ports';
 import { createWorkspace } from '../services/workspace';
-import { baseTitle, htmlToText } from '@show-uploader/domain';
+import { baseTitle, htmlToText, platformTags, strandOfTitle } from '@show-uploader/domain';
 
 /**
  * Upload the ARCHIVED video to YouTube.
@@ -35,7 +35,8 @@ export async function processYoutube(
       title,
       // YouTube wants plain text; the description is rich-text HTML (the PB master).
       description: htmlToText(description),
-      tags,
+      // The strand is a platform tag only; the write-back below keeps the plain genres.
+      tags: platformTags(tags, strandOfTitle(title)),
       onProgress: async (pct) => {
         const adjusted = 20 + Math.round(pct * 0.78);
         await records.setJobStatus(jobId, 'processing', { progress_pct: adjusted });

@@ -3,7 +3,7 @@ import fs from 'fs';
 import type { JobPayload } from '../types';
 import type { WorkerDeps } from '../ports';
 import { prependJingle, captureSquareFrame, measureLoudness } from '../services/ffmpeg';
-import { baseTitle, htmlToText } from '@show-uploader/domain';
+import { baseTitle, htmlToText, platformTags, strandOfTitle } from '@show-uploader/domain';
 import { createWorkspace } from '../services/workspace';
 
 /**
@@ -95,7 +95,8 @@ export async function processMixcloud(
       title,
       // MixCloud wants plain text; the description is rich-text HTML (the PB master).
       description: htmlToText(description),
-      tags,
+      // The strand is a platform tag only; the write-back below keeps the plain genres.
+      tags: platformTags(tags, strandOfTitle(title)),
       imagePath: fs.existsSync(thumbPath) ? thumbPath : undefined,
     });
 

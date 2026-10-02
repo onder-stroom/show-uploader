@@ -1,4 +1,4 @@
-import { platformOfLabel, platformTitle } from '@show-uploader/domain';
+import { otherStrandName, platformOfLabel, platformTitle } from '@show-uploader/domain';
 import type { ApiDeps } from '../ports';
 import { adoptArchivedUpload } from './archive';
 import { UseCaseError } from './errors';
@@ -207,10 +207,10 @@ export async function publishToPlatform(
     platform,
     videoS3Key: upload.video_s3_key,
     audioS3Key: upload.audio_s3_key,
-    // platformTitle strips any existing "<date> @ coming soon" suffix before
+    // platformTitle strips any existing "<date> @ <strand>" suffix before
     // re-adding, so it's correct for both a fresh row (raw record title) and an
     // old one that already carries the convention.
-    title: platformTitle(upload.title, show.date),
+    title: platformTitle(upload.title, show.date, otherStrandName(show.strand)),
     description: upload.description ?? '',
     tags: upload.tags ?? [],
     imageUrl: show.imageUrl,

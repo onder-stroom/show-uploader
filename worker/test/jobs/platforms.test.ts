@@ -73,6 +73,20 @@ describe('youtube job', () => {
     });
   });
 
+  it('gives YouTube the title\'s strand as first tag, but writes only the genres back', async () => {
+    const deps = fakeDeps({ objects: { [VIDEO]: 10 } });
+
+    await processYoutube(fakeJob(payload({ title: 'Radio Boslabs 30.09.2026 @ De Bosbar' })), deps);
+
+    expect(deps.youtube.upload).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Radio Boslabs 30.09.2026 @ De Bosbar', tags: ['De Bosbar', 'disco'] })
+    );
+    expect(deps.agenda.finalize).toHaveBeenCalledWith(
+      'show-1',
+      expect.objectContaining({ title: 'Radio Boslabs', tags: ['disco'] })
+    );
+  });
+
   it('marks the job failed and writes nothing back when the upload fails', async () => {
     const deps = fakeDeps({ objects: { [VIDEO]: 10 } });
     deps.youtube.upload.mockRejectedValueOnce(new Error('quotaExceeded'));
@@ -138,6 +152,18 @@ describe('mixcloud job', () => {
     expect(vi.mocked(captureSquareFrame)).toHaveBeenCalledOnce();
     expect(deps.mixcloud.upload).toHaveBeenCalledWith(
       expect.objectContaining({ imagePath: path.join(workDir, 'cover.jpg') })
+    );
+  });
+
+  it('gives MixCloud the title\'s strand as first tag, but writes only the genres back', async () => {
+    const deps = fakeDeps({ objects: { [AUDIO]: 10, [VIDEO]: 10 } });
+
+    await processMixcloud(fakeJob(mixcloud({ title: 'Radio Boslabs 30.09.2026 @ De Bosbar' })), deps);
+
+    expect(deps.mixcloud.upload).toHaveBeenCalledWith(expect.objectContaining({ tags: ['De Bosbar', 'disco'] }));
+    expect(deps.agenda.finalize).toHaveBeenCalledWith(
+      'show-1',
+      expect.objectContaining({ title: 'Radio Boslabs', tags: ['disco'] })
     );
   });
 

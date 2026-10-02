@@ -1,5 +1,6 @@
 import { guardedSession } from '../auth/signin';
 import { getFreshAccessToken, withAuthRetry } from '../auth/session';
+import type { ShowStrand } from '@domain/format';
 
 export type MediaLink = { label: string; type: string; url: string };
 
@@ -15,6 +16,8 @@ export type AgendaShow = {
   mediaLinks: MediaLink[];
   // The linked show/series blurb (archive.show → shows.description).
   showDescription: string | null;
+  // The archive record's strand: another strand than the default marks a show that is not a coming soon one.
+  strand: ShowStrand | null;
   updated: string;
 };
 

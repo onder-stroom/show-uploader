@@ -43,6 +43,13 @@ describe('toAgendaShow', () => {
     expect(withGenres.tags).toEqual(['house', 'disco']);
   });
 
+  it('maps the expanded strand with its default flag, else null', () => {
+    expect(toAgendaShow(base).strand).toBeNull();
+    expect(toAgendaShow({ ...base, expand: { strand: { name: 'De Bosbar', isDefault: false } } }).strand).toEqual({ name: 'De Bosbar', isDefault: false });
+    expect(toAgendaShow({ ...base, expand: { strand: { name: 'coming soon', isDefault: true } } }).strand).toEqual({ name: 'coming soon', isDefault: true });
+    expect(toAgendaShow({ ...base, expand: { strand: {} } }).strand).toBeNull();
+  });
+
   it('maps the linked series blurb to showDescription, else null', () => {
     expect(toAgendaShow(base).showDescription).toBeNull();
     const withShow = toAgendaShow({ ...base, expand: { series: { description: 'weekly boogie hour' } } });

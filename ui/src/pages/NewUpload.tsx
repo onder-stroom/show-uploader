@@ -31,6 +31,7 @@ import { useUpload } from '../upload/UploadProvider';
 import { resolveVideo, type StagedVideo } from '../upload/resolveVideo';
 import { usePresence } from '../presence/PresenceProvider';
 import { shortName } from '../components/PresenceRoster';
+import { otherStrandName, platformTitle } from '@domain/format';
 import { humanSize } from '../format';
 import { c, ROLE, LABEL_SX } from '../theme';
 
@@ -65,19 +66,6 @@ function scheduledDuration(startTime: string, endTime: string): string | null {
   const hh = String(Math.floor(mins / 60)).padStart(2, '0');
   const mm = String(mins % 60).padStart(2, '0');
   return `${hh}:${mm}:00`;
-}
-
-// Published title convention: "<name> <DD.MM.YYYY> @ coming soon".
-function publishTitle(name: string, date: string): string {
-  const [y, m, d] = (date ?? '').split('-');
-  const dmy = d && m && y ? `${d}.${m}.${y}` : date;
-  // Strip an existing "<date> @ coming soon" suffix (as one unit) first so a
-  // show title that already follows the convention doesn't get it appended
-  // twice — without touching a bare trailing date that's part of the real name.
-  const base = (name ?? '')
-    .replace(/\s*(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4}\s*)?@\s*coming soon\s*$/i, '')
-    .trim();
-  return `${base} ${dmy} @ coming soon`;
 }
 
 // Inline text links are only as tall as their text — around 17px here, well
@@ -212,7 +200,7 @@ export default function NewUpload() {
   // there's nothing to reset or race here.
   useEffect(() => {
     if (!selectedShow) return;
-    setTitle(publishTitle(selectedShow.title, selectedShow.date));
+    setTitle(platformTitle(selectedShow.title, selectedShow.date, otherStrandName(selectedShow.strand)));
     // Description = the episode's own notes (PB is master); fall back to the
     // linked show's blurb when the episode has none of its own.
     setDescription(selectedShow.description || selectedShow.showDescription || '');

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { baseTitle, appendHashtags, tagsToHashtags, htmlToText, sanitizeForYoutube, capTitle } from '../src/format';
+import { baseTitle, appendHashtags, tagsToHashtags, htmlToText, sanitizeForYoutube, capTitle, otherStrandName, platformTags, platformTitle, strandOfTitle } from '../src/format';
 
 describe('baseTitle — plain title for PocketBase, no convention suffix', () => {
   it('strips a "<date> @ coming soon" suffix as one unit', () => {
@@ -142,5 +142,66 @@ describe('capTitle — platform 100-char limit, keep the @ coming soon suffix', 
     const out = capTitle('Z'.repeat(140));
     expect(out.length).toBeLessThanOrEqual(100);
     expect(out.endsWith('\u2026')).toBe(true);
+  });
+});
+
+
+describe('strands in titles and tags', () => {
+  it('a show on the default strand keeps "@ coming soon"', () => {
+    expect(platformTitle('Radio Boslabs', '2026-09-30')).toBe('Radio Boslabs 30.09.2026 @ coming soon');
+    expect(platformTitle('Radio Boslabs', '2026-09-30', null)).toBe('Radio Boslabs 30.09.2026 @ coming soon');
+    expect(platformTitle('Radio Boslabs', '2026-09-30', '  ')).toBe('Radio Boslabs 30.09.2026 @ coming soon');
+  });
+
+  it('another strand replaces the brand in the suffix', () => {
+    expect(platformTitle('Radio Boslabs', '2026-09-30', 'De Bosbar')).toBe('Radio Boslabs 30.09.2026 @ De Bosbar');
+  });
+
+  it('re-syncing never doubles a suffix, whichever strand wrote it', () => {
+    expect(platformTitle('Radio Boslabs 30.09.2026 @ De Bosbar', '2026-09-30', 'De Bosbar')).toBe('Radio Boslabs 30.09.2026 @ De Bosbar');
+    expect(platformTitle('Radio Boslabs 30.09.2026 @ coming soon', '2026-09-30', 'De Bosbar')).toBe('Radio Boslabs 30.09.2026 @ De Bosbar');
+  });
+
+  it('baseTitle strips a dated "@ <strand>" suffix, so a hand-typed one never reaches PocketBase', () => {
+    expect(baseTitle('Radio Boslabs 30.09.2026 @ De Bosbar')).toBe('Radio Boslabs');
+    expect(baseTitle('Radio Boslabs 30.09.2026  @  De Bosbar ')).toBe('Radio Boslabs');
+  });
+
+  it('baseTitle keeps a name that merely contains an "@" or ends in a date', () => {
+    expect(baseTitle('Live @ Café')).toBe('Live @ Café');
+    expect(baseTitle('Live @ Café 12.05.2024')).toBe('Live @ Café 12.05.2024');
+    expect(baseTitle('Nightshift @ De Bosbar')).toBe('Nightshift @ De Bosbar');
+  });
+
+  it('otherStrandName is only a non-default strand with a name', () => {
+    expect(otherStrandName({ name: 'De Bosbar', isDefault: false })).toBe('De Bosbar');
+    expect(otherStrandName({ name: 'coming soon', isDefault: true })).toBeNull();
+    expect(otherStrandName({ name: '  ', isDefault: false })).toBeNull();
+    expect(otherStrandName(null)).toBeNull();
+    expect(otherStrandName(undefined)).toBeNull();
+  });
+
+  it('strandOfTitle reads the strand a platform title names, and nothing for the house brand', () => {
+    expect(strandOfTitle('Radio Boslabs 30.09.2026 @ De Bosbar')).toBe('De Bosbar');
+    expect(strandOfTitle('Radio Boslabs 30.09.2026  @  De Bosbar ')).toBe('De Bosbar');
+    expect(strandOfTitle('Radio Boslabs 30.09.2026 @ coming soon')).toBeNull();
+    expect(strandOfTitle('Radio Boslabs 30.09.2026 @ Coming Soon')).toBeNull();
+    expect(strandOfTitle('Radio Boslabs')).toBeNull();
+    expect(strandOfTitle('Live @ Café')).toBeNull(); // an "@" without the date is part of the name
+    expect(strandOfTitle(platformTitle('X', '2026-01-02', 'Stormkop'))).toBe('Stormkop');
+  });
+
+  it('platformTags puts the strand first and never duplicates it', () => {
+    expect(platformTags(['house', 'live'], 'De Bosbar')).toEqual(['De Bosbar', 'house', 'live']);
+    expect(platformTags(['house', 'de bosbar'], 'De Bosbar')).toEqual(['De Bosbar', 'house']);
+    const tags = ['house'];
+    expect(platformTags(tags, null)).toBe(tags);
+    expect(platformTags(tags, undefined)).toBe(tags);
+  });
+
+  it('capTitle keeps another strand\'s suffix when the name is trimmed', () => {
+    const out = capTitle(`${'Z'.repeat(140)} 30.09.2026 @ De Bosbar`);
+    expect(out.length).toBeLessThanOrEqual(100);
+    expect(out.endsWith('@ De Bosbar')).toBe(true);
   });
 });

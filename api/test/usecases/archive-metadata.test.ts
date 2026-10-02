@@ -61,6 +61,25 @@ describe('updateMetadata', () => {
     expect(deps.uploads.updateMetadata).toHaveBeenCalledWith('up-1', edit);
   });
 
+  it('gives the platforms the strand from the title as first tag, and PocketBase never', async () => {
+    const deps = fakeDeps({ uploads: [published()] });
+    const bosbar = { ...edit, title: 'Palmbomen II 08.08.2026 @ De Bosbar' };
+
+    await updateMetadata('up-1', bosbar, deps);
+
+    const sent = { ...bosbar, tags: ['De Bosbar', 'disco'] };
+    expect(deps.platforms.syncYoutube).toHaveBeenCalledWith('https://youtu.be/x', sent);
+    expect(deps.platforms.syncMixcloud).toHaveBeenCalledWith('https://mixcloud.com/y/', sent);
+    expect(deps.agenda.resolveGenres).toHaveBeenCalledWith(['disco']);
+    expect(deps.agenda.update).toHaveBeenCalledWith('show-1', expect.objectContaining({ title: 'Palmbomen II' }));
+  });
+
+  it('adds no tag for the house brand', async () => {
+    const deps = fakeDeps({ uploads: [published()] });
+    await updateMetadata('up-1', edit, deps);
+    expect(deps.platforms.syncYoutube).toHaveBeenCalledWith('https://youtu.be/x', edit);
+  });
+
   // PocketBase keeps the plain title; the date suffix is only for the platforms.
   it('writes the plain title, genre ids and platform links to the agenda', async () => {
     const deps = fakeDeps({ uploads: [published()] });
