@@ -16,12 +16,21 @@ import {
 import { humanDuration } from '../format';
 import { c } from '../theme';
 import { PageLoading } from '../components/Skeleton';
+import { HotkeysProvider } from 'react-hotkeys-hook';
+import Tooltip from '@mui/material/Tooltip';
 import AddShowDialog from '../components/AddShowDialog';
+import SegmentControls from '../components/SegmentControls';
+import ShortcutSheet from '../components/ShortcutSheet';
 import ShowPicker from '../components/ShowPicker';
 import { TrimBar, ZOOM_LEVELS } from '../components/TrimBar';
 import { toWaveform } from '../components/WaveformPath';
 import { resolveSegment, type CutStatusView, type SegmentStatus } from '../upload/resolveSegment';
+import { moveEnd, moveStart } from '../upload/clipRange';
+import { shuttleLabel } from '../upload/shuttle';
 import { slotFromRecording, toShowOption, type ShowOption } from '../upload/showPicker';
+import { useEditorHotkeys } from '../upload/useEditorHotkeys';
+import { useSegmentHistory } from '../upload/useSegmentHistory';
+import { useShuttle } from '../upload/useShuttle';
 import { agendaSlot, editorNote, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../upload/segments';
 
 // The PC's clock is Brussels, and so is everyone reading this page.
@@ -120,7 +129,16 @@ export default function Recordings() {
   );
 }
 
-function Editor({ recording, onClose }: { recording: AgentRecording; onClose: () => void }) {
+// The provider is what lets the cheat sheet list the shortcuts the editor registers.
+function Editor(props: { recording: AgentRecording; onClose: () => void }) {
+  return (
+    <HotkeysProvider>
+      <EditorInner {...props} />
+    </HotkeysProvider>
+  );
+}
+
+function EditorInner({ recording, onClose }: { recording: AgentRecording; onClose: () => void }) {
   const durationS = recording.durationS ?? 0;
   const preview = usePreviewPath(recording.hasPreview ? recording.ref : null);
   const peaks = useRecordingPeaks(recording.ref);
@@ -128,7 +146,7 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
   const uploading = useUploadingProgress();
   const startCuts = useStartCuts();
 
-  const [segments, setSegments] = useState<Draft[]>([]);
+  const { segments, commit, undo, redo, canUndo, canRedo } = useSegmentHistory([]);
   const [playhead, setPlayhead] = useState(0);
   const [cutByShow, setCutByShow] = useState<Record<string, string>>({});
   const statuses = useCutStatuses(Object.values(cutByShow));
@@ -136,6 +154,8 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
   // The segment a new show is being added for, and what the operator had typed.
   const [adding, setAdding] = useState<{ segId: string; title: string } | null>(null);
   const [zoomIndex, setZoomIndex] = useState(0);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [looping, setLooping] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
   const nextId = useRef(1);
   const newId = () => String(nextId.current++);
@@ -162,13 +182,20 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
     setPlayhead(seconds);
   };
 
-  const patch = (id: string, change: Partial<Draft>) => setSegments((all) => all.map((s) => (s.id === id ? { ...s, ...change } : s)));
+  const shuttle = useShuttle(video, seek);
+  // Looping ends when playback does, however it stops.
+  useEffect(() => { if (shuttle.rate === 0) setLooping(false); }, [shuttle.rate]);
+
+  // A frozen segment takes no edits (only its own unfreeze), whoever asks: a row, the timeline or a key.
+  const patch = (id: string, change: Partial<Draft>) =>
+    commit((all) => all.map((s) => (s.id === id && (!s.frozen || 'frozen' in change) ? { ...s, ...change } : s)), `edit:${id}`);
+  const toggleFreeze = (id: string) => commit((all) => all.map((s) => (s.id === id ? { ...s, frozen: !s.frozen } : s)));
 
   // Agenda times are DRAFT markers: they fill in a first guess the operator then corrects.
   const suggest = () => {
     const slots = (shows.data ?? []).map(agendaSlot).filter((s): s is NonNullable<typeof s> => s !== null);
     const next = suggestSegments(recording.recordedAtMs, durationS, slots).map((s) => ({ ...s, id: newId() }));
-    setSegments(next);
+    commit(next);
     setSelectedId(next[0]?.id ?? null);
   };
 
@@ -176,15 +203,49 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
     const seg = newSegmentAt(playhead, durationS, segments);
     if (!seg) return;
     const draft = { ...seg, id: newId(), showId: null };
-    setSegments((all) => [...all, draft].sort((a, b) => a.startS - b.startS));
+    commit((all) => [...all, draft].sort((a, b) => a.startS - b.startS));
     setSelectedId(draft.id);
   };
 
   // Removing the selected segment selects its neighbour (the next one, else the previous).
   const remove = (id: string) => {
+    if (segments.find((x) => x.id === id)?.frozen) return;
     setSelectedId(selectAfterRemove(segments, id, selectedId));
-    setSegments(segments.filter((x) => x.id !== id));
+    commit((all) => all.filter((x) => x.id !== id));
   };
+
+  // The Clipper's marks, length and nudges for the selected segment. moveStart/moveEnd slide the
+  // whole selection instead of collapsing it when a point is moved past the other.
+  const sel = selected ? { start: selected.startS, end: selected.endS } : null;
+  const editable = !!selected && !selected.frozen && !isActive(cutFor(selected));
+  const setStart = (value: number) => {
+    if (!sel || !editable) return;
+    const r = moveStart(sel, durationS, Math.max(0, value));
+    patch(selected!.id, { startS: r.start, endS: r.end });
+  };
+  const setEnd = (value: number) => {
+    if (!sel || !editable) return;
+    const r = moveEnd(sel, durationS, Math.min(durationS, value));
+    patch(selected!.id, { startS: r.start, endS: r.end });
+  };
+  const now = () => video.current?.currentTime ?? playhead;
+  const startLoop = () => {
+    if (!selected) return;
+    seek(selected.startS);
+    setLooping(true);
+    void video.current?.play();
+  };
+
+  useEditorHotkeys({
+    shuttle: shuttle.press,
+    markIn: () => setStart(now()),
+    markOut: () => setEnd(now()),
+    goToIn: () => selected && seek(selected.startS),
+    goToOut: () => selected && seek(selected.endS),
+    undo: () => { if (canUndo && !anyActive) undo(); },
+    redo: () => { if (canRedo && !anyActive) redo(); },
+    toggleSheet: () => setSheetOpen((o) => !o),
+  });
 
   const submit = () =>
     startCuts.mutate(
@@ -203,7 +264,13 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
       {preview.data ? (
         <Box
           component="video" ref={video} src={preview.data.path} controls preload="metadata" playsInline
-          onTimeUpdate={(e: React.SyntheticEvent<HTMLVideoElement>) => setPlayhead(e.currentTarget.currentTime)}
+          {...shuttle.videoProps}
+          onTimeUpdate={(e: React.SyntheticEvent<HTMLVideoElement>) => {
+            const t = e.currentTarget.currentTime;
+            setPlayhead(t);
+            // Loop: at the out point, back to the in point.
+            if (looping && selected && t >= selected.endS) seek(selected.startS);
+          }}
           sx={{ width: '100%', maxWidth: '100%', maxHeight: '45vh', backgroundColor: '#000', display: 'block' }}
         />
       ) : (
@@ -213,6 +280,17 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
             : preview.isError ? `could not open the preview: ${preview.error.message}` : 'loading the preview…'}
         </Typography>
       )}
+
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+        <Typography variant="caption" sx={{ minWidth: 64, fontWeight: 600 }}>{shuttleLabel(shuttle.rate)}{looping ? ' · loop' : ''}</Typography>
+        <Tooltip title="undo. shortcut: ⌘Z"><span>
+          <Button size="small" disabled={!canUndo || anyActive} onClick={undo}>undo</Button>
+        </span></Tooltip>
+        <Tooltip title="redo. shortcut: ⌘⇧Z"><span>
+          <Button size="small" disabled={!canRedo || anyActive} onClick={redo}>redo</Button>
+        </span></Tooltip>
+        <ShortcutSheet open={sheetOpen} onToggle={() => setSheetOpen((o) => !o)} />
+      </Stack>
 
       <Stack spacing={1} sx={{ minWidth: 0 }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
@@ -233,15 +311,26 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
           onScrub={seek}
           waveform={waveform}
           others={segments.filter((s) => s.id !== selectedId).map((s) => ({ start: s.startS, end: s.endS }))}
-          disabled={selected ? isActive(cutFor(selected)) : false}
+          disabled={!!selected && (!!selected.frozen || isActive(cutFor(selected)))}
         />
         <Typography variant="caption" color="text.disabled">
           select a segment, then drag its edges or the block on the timeline. click or drag the timeline to seek. agenda times are only a first guess.
         </Typography>
       </Stack>
 
+      <SegmentControls
+        segment={selected} locked={!editable}
+        onMarkIn={() => setStart(now())} onMarkOut={() => setEnd(now())}
+        onGoToIn={() => selected && seek(selected.startS)} onGoToOut={() => selected && seek(selected.endS)}
+        onSetLength={(sec) => selected && patch(selected.id, { endS: Math.min(durationS, selected.startS + sec) })}
+        onNudgeStart={(d) => selected && setStart(selected.startS + d)} onNudgeEnd={(d) => selected && setEnd(selected.endS + d)}
+        onStartLoop={startLoop}
+      />
+
       <Stack direction="row" spacing={1}>
-        <Button size="small" variant="outlined" onClick={suggest} disabled={!shows.data || anyActive}>suggest from agenda</Button>
+        <Tooltip title={segments.some((x) => x.frozen) ? 'unfreeze your segments first: suggesting would replace them' : 'fill in a first guess from the agenda'}><span>
+          <Button size="small" variant="outlined" onClick={suggest} disabled={!shows.data || anyActive || segments.some((x) => x.frozen)}>suggest from agenda</Button>
+        </span></Tooltip>
         <Button size="small" variant="outlined" onClick={add} disabled={anyActive || newSegmentAt(playhead, durationS, segments) === null}>add segment</Button>
       </Stack>
 
@@ -250,13 +339,14 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
           const expected = cutFilename(recording.filename, s.startS, s.endS);
           return (
             <SegmentRow
-              key={s.id} index={i} draft={s} playhead={playhead} expectedFilename={expected}
+              key={s.id} index={i} draft={s} expectedFilename={expected}
               cut={cutFor(s)}
               selected={s.id === selectedId}
               onSelect={() => setSelectedId(s.id)}
               uploadFraction={fractionFor(s.showId)}
               showOptions={(shows.data ?? []).map((x) => toShowOption(x, segments.some((o) => o.id !== s.id && o.showId === x.id)))}
               onAddShow={(title) => setAdding({ segId: s.id, title })}
+              onToggleFreeze={() => toggleFreeze(s.id)}
               problem={problems.find((p) => p.index === i)?.message}
               onChange={(change) => patch(s.id, change)}
               onRemove={() => remove(s.id)}
@@ -289,18 +379,19 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
 }
 
 function SegmentRow(props: {
-  index: number; draft: Draft; playhead: number; expectedFilename: string;
+  index: number; draft: Draft; expectedFilename: string;
   cut: CutStatusView | undefined; selected: boolean; onSelect(): void; uploadFraction: number | null;
   showOptions: ShowOption[];
   problem: string | undefined;
-  onChange(change: Partial<Draft>): void; onRemove(): void; onAddShow(typedTitle: string): void;
+  onChange(change: Partial<Draft>): void; onRemove(): void; onAddShow(typedTitle: string): void; onToggleFreeze(): void;
 }) {
   const { draft, cut, index } = props;
   // Only a video whose filename matches THIS cut counts as this segment's result.
   const staged = useStaged(draft.showId ?? undefined).data;
   const matching = staged && staged.filename === props.expectedFilename ? staged : null;
   const status = resolveSegment({ cut, staged: matching, uploadFraction: props.uploadFraction });
-  const locked = isActive(cut);
+  const running = isActive(cut);
+  const locked = running || !!draft.frozen;
   const replaces = staged && !matching && status.state === 'draft';
 
   return (
@@ -325,9 +416,7 @@ function SegmentRow(props: {
           {index + 1}
         </ButtonBase>
         <TimeField label="in" disabled={locked} onFocus={props.onSelect} value={draft.startS} onCommit={(s) => props.onChange({ startS: s })} />
-        <Button size="small" disabled={locked} onClick={() => { props.onSelect(); props.onChange({ startS: props.playhead }); }}>← playhead</Button>
         <TimeField label="out" disabled={locked} onFocus={props.onSelect} value={draft.endS} onCommit={(s) => props.onChange({ endS: s })} />
-        <Button size="small" disabled={locked} onClick={() => { props.onSelect(); props.onChange({ endS: props.playhead }); }}>← playhead</Button>
         <ShowPicker
           value={draft.showId} options={props.showOptions} disabled={locked} onOpen={props.onSelect}
           onChange={(showId) => props.onChange({ showId })} onAdd={props.onAddShow}
@@ -335,6 +424,11 @@ function SegmentRow(props: {
         <Typography variant="caption" sx={{ minWidth: 150, color: status.state === 'failed' ? c.danger : c.muted }}>
           {statusLabel(status)}
         </Typography>
+        <Tooltip title={draft.frozen ? 'unlock this segment so it can be changed again' : 'lock this segment so it cannot be changed by accident'}><span>
+          <Button size="small" disabled={running} onClick={(e) => { e.stopPropagation(); props.onToggleFreeze(); }}>
+            {draft.frozen ? 'unfreeze' : 'freeze'}
+          </Button>
+        </span></Tooltip>
         <Button size="small" disabled={locked} onClick={(e) => { e.stopPropagation(); props.onRemove(); }}>
           remove
         </Button>

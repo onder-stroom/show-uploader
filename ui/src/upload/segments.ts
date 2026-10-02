@@ -1,7 +1,12 @@
 import { MIN_SEGMENT_SECONDS, type AgendaSlot, type Segment } from '@domain/recording-segments';
 
 /** The editor's working copy of a segment. The server re-validates everything with the domain rules. */
-export type Draft = Segment & { id: string; showId: string | null };
+export type Draft = Segment & {
+  id: string;
+  showId: string | null;
+  /** Locked by the operator: it cannot be dragged, edited, re-assigned or removed until unfrozen. */
+  frozen?: boolean;
+};
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 
