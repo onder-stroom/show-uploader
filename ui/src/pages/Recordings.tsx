@@ -4,8 +4,6 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import ButtonBase from '@mui/material/ButtonBase';
 import IconButton from '@mui/material/IconButton';
-import MenuItem from '@mui/material/MenuItem';
-import Select from '@mui/material/Select';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
@@ -18,9 +16,12 @@ import {
 import { humanDuration } from '../format';
 import { c } from '../theme';
 import { PageLoading } from '../components/Skeleton';
+import AddShowDialog from '../components/AddShowDialog';
+import ShowPicker from '../components/ShowPicker';
 import { TrimBar, ZOOM_LEVELS } from '../components/TrimBar';
 import { toWaveform } from '../components/WaveformPath';
 import { resolveSegment, type CutStatusView, type SegmentStatus } from '../upload/resolveSegment';
+import { slotFromRecording, toShowOption, type ShowOption } from '../upload/showPicker';
 import { agendaSlot, editorNote, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../upload/segments';
 
 // The PC's clock is Brussels, and so is everyone reading this page.
@@ -132,6 +133,8 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
   const [cutByShow, setCutByShow] = useState<Record<string, string>>({});
   const statuses = useCutStatuses(Object.values(cutByShow));
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The segment a new show is being added for, and what the operator had typed.
+  const [adding, setAdding] = useState<{ segId: string; title: string } | null>(null);
   const [zoomIndex, setZoomIndex] = useState(0);
   const video = useRef<HTMLVideoElement>(null);
   const nextId = useRef(1);
@@ -252,7 +255,8 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
               selected={s.id === selectedId}
               onSelect={() => setSelectedId(s.id)}
               uploadFraction={fractionFor(s.showId)}
-              showOptions={(shows.data ?? []).map((x) => ({ id: x.id, title: x.title, taken: segments.some((o) => o.id !== s.id && o.showId === x.id) }))}
+              showOptions={(shows.data ?? []).map((x) => toShowOption(x, segments.some((o) => o.id !== s.id && o.showId === x.id)))}
+              onAddShow={(title) => setAdding({ segId: s.id, title })}
               problem={problems.find((p) => p.index === i)?.message}
               onChange={(change) => patch(s.id, change)}
               onRemove={() => remove(s.id)}
@@ -260,6 +264,19 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
           );
         })}
       </Stack>
+
+      {adding && (() => {
+        const seg = segments.find((x) => x.id === adding.segId);
+        if (!seg) return null;
+        return (
+          <AddShowDialog
+            open
+            initial={{ title: adding.title, ...slotFromRecording(recording.recordedAtMs, seg.startS, seg.endS) }}
+            onClose={() => setAdding(null)}
+            onCreated={(show) => { patch(adding.segId, { showId: show.id }); setAdding(null); }}
+          />
+        );
+      })()}
 
       {startCuts.isError && <Typography variant="body2" sx={{ color: c.danger }}>{startCuts.error.message}</Typography>}
       <Box>
@@ -274,9 +291,9 @@ function Editor({ recording, onClose }: { recording: AgentRecording; onClose: ()
 function SegmentRow(props: {
   index: number; draft: Draft; playhead: number; expectedFilename: string;
   cut: CutStatusView | undefined; selected: boolean; onSelect(): void; uploadFraction: number | null;
-  showOptions: { id: string; title: string; taken: boolean }[];
+  showOptions: ShowOption[];
   problem: string | undefined;
-  onChange(change: Partial<Draft>): void; onRemove(): void;
+  onChange(change: Partial<Draft>): void; onRemove(): void; onAddShow(typedTitle: string): void;
 }) {
   const { draft, cut, index } = props;
   // Only a video whose filename matches THIS cut counts as this segment's result.
@@ -311,16 +328,10 @@ function SegmentRow(props: {
         <Button size="small" disabled={locked} onClick={() => { props.onSelect(); props.onChange({ startS: props.playhead }); }}>← playhead</Button>
         <TimeField label="out" disabled={locked} onFocus={props.onSelect} value={draft.endS} onCommit={(s) => props.onChange({ endS: s })} />
         <Button size="small" disabled={locked} onClick={() => { props.onSelect(); props.onChange({ endS: props.playhead }); }}>← playhead</Button>
-        <Select
-          size="small" displayEmpty value={draft.showId ?? ''} sx={{ minWidth: 220, flex: 1 }}
-          disabled={locked} onOpen={props.onSelect}
-          onChange={(e) => props.onChange({ showId: e.target.value || null })}
-        >
-          <MenuItem value=""><em>choose the show…</em></MenuItem>
-          {props.showOptions.map((o) => (
-            <MenuItem key={o.id} value={o.id} disabled={o.taken}>{o.title}</MenuItem>
-          ))}
-        </Select>
+        <ShowPicker
+          value={draft.showId} options={props.showOptions} disabled={locked} onOpen={props.onSelect}
+          onChange={(showId) => props.onChange({ showId })} onAdd={props.onAddShow}
+        />
         <Typography variant="caption" sx={{ minWidth: 150, color: status.state === 'failed' ? c.danger : c.muted }}>
           {statusLabel(status)}
         </Typography>

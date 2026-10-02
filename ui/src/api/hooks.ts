@@ -16,6 +16,19 @@ export function useShows() {
 // Shows already published elsewhere, for the "attach a recording" picker.
 // Filtered client-side in Attach.tsx to ones with no cs-archive-video link —
 // this returns every published record.
+// The agenda's strands (channels), for the "add a show" form.
+export function useStrands() {
+  const trpc = useTRPC();
+  return useQuery(trpc.shows.listStrands.queryOptions(undefined, { staleTime: 5 * 60_000 }));
+}
+
+// Add a show the agenda does not have; it joins the "to process" list.
+export function useCreateShow() {
+  const qc = useQueryClient();
+  const trpc = useTRPC();
+  return useMutation(trpc.shows.create.mutationOptions({ onSuccess: () => qc.invalidateQueries(trpc.shows.pathFilter()) }));
+}
+
 export function useListPublishedShows() {
   const trpc = useTRPC();
   return useQuery(trpc.shows.listPublished.queryOptions(undefined, { staleTime: 30_000 }));

@@ -31,7 +31,7 @@ import { presenceHub } from './services/presence-hub';
 import { createRecordingsAgent } from './services/recordings-agent';
 import { abortMultipart, completeMultipart, createMultipart, listUploadedParts, objectInfo, presignUploadPart } from './services/s3';
 import { findShowFolder } from './services/show-folder';
-import { getArchiveShow, resolveGenreIds, updateArchiveRecord } from './services/shows-api';
+import { createArchiveDraft, getArchiveShow, listShows, listStrands, resolveGenreIds, updateArchiveRecord } from './services/shows-api';
 import type { PreviewJobView } from './services/video-preview';
 import type { ApiDeps, CutJobView } from './ports';
 
@@ -80,6 +80,9 @@ export function createDeps(): ApiDeps {
       getShow: getArchiveShow,
       update: updateArchiveRecord,
       resolveGenres: resolveGenreIds,
+      listStrands,
+      listDrafts: listShows,
+      createDraft: createArchiveDraft,
       liveState: getLiveState,
     },
     queue: {

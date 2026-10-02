@@ -58,6 +58,7 @@ Read `docs/architecture/video-lifecycle.md` before touching upload/video state.
 | Rules behind an endpoint | `api/src/usecases/` (publish, retry, archive actions, metadata edit, preview). Routers only validate input, call a use case and map its `UseCaseError` to a tRPC code. |
 | PocketBase reads/writes | `api/src/services/shows-api.ts` (token cache, retries, genre mapping) |
 | Postgres | the stack's own `postgres` service (not Neon since 2026-09-23). Queries in `api/src/db/queries.ts` (takes `db` as a parameter) and `worker/src/db.ts`; TLS comes from `DATABASE_URI`'s `sslmode`, and in-stack needs none. Migrations run on api startup. |
+| A show the agenda does not have | `api/src/usecases/shows.ts` (`createShow`) over `createArchiveDraft` in `shows-api.ts`: a draft archive record, no episode or series. The recordings editor's picker (`ui/src/components/ShowPicker.tsx`) offers it. |
 | OBS recordings and cuts | `api/src/usecases/recording-cuts.ts`, `worker/src/jobs/cut-recording.ts`, `watcher/` on the PC; the shared rules and agent protocol are in `@show-uploader/domain` (`recording-segments.ts`, `recordings-contract.ts`) |
 | S3 keys and folders | `@show-uploader/domain` (`storage-layout.ts`, `show-slug.ts`) |
 | S3 access / signing | `api/src/services/s3.ts`, `worker/src/services/s3.ts`; UI signs through the `storage.signObject` query |

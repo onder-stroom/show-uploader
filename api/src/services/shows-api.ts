@@ -287,6 +287,57 @@ async function pbFetch(path: string, init?: RequestInit): Promise<Response> {
   return res;
 }
 
+export type AgendaStrand = { id: string; name: string; isDefault: boolean };
+
+// The agenda's strands (channels), for the "add a show" form. `isDefault` is the one new shows start on.
+export async function listStrands(): Promise<AgendaStrand[]> {
+  const res = await pbFetch(`/api/collections/strands/records?perPage=100&sort=name&fields=id,name,isDefault`);
+  if (!res.ok) throw new Error(`PocketBase strands error: ${res.status}`);
+  const body = (await res.json()) as { items: { id: string; name?: string; isDefault?: boolean }[] };
+  return body.items.filter((r) => r.name).map((r) => ({ id: r.id, name: r.name!, isDefault: !!r.isDefault }));
+}
+
+export type NewDraftShow = {
+  title: string;
+  /** YYYY-MM-DD, UTC like every agenda time. */
+  date: string;
+  /** HH:MM, UTC. */
+  startTime: string;
+  /** HH:MM, UTC. At or before the start means the show ends the next day. */
+  endTime: string;
+  strandId: string | null;
+};
+
+// PocketBase's datetime text: "YYYY-MM-DD HH:MM:SS.sssZ".
+const pbDateTime = (ms: number) => new Date(ms).toISOString().replace('T', ' ');
+
+/**
+ * A draft archive record for a show the agenda does not have (the "to process" list is
+ * the drafts). No episode or series: it is only a home for the upload's title, notes,
+ * tags and links. Never published here, that stays the explicit "publish to agenda".
+ */
+export async function createArchiveDraft(input: NewDraftShow): Promise<AgendaShow> {
+  const startMs = Date.parse(`${input.date}T${input.startTime}:00Z`);
+  let endMs = Date.parse(`${input.date}T${input.endTime}:00Z`);
+  if (endMs <= startMs) endMs += 24 * 3600_000;
+  const res = await pbFetch(
+    `/api/collections/archive/records?expand=${ARCHIVE_EXPAND}&fields=${ARCHIVE_FIELDS}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: input.title,
+        startTime: pbDateTime(startMs),
+        endTime: pbDateTime(endMs),
+        status: 'draft',
+        ...(input.strandId ? { strand: input.strandId } : {}),
+      }),
+    }
+  );
+  if (!res.ok) throw new Error(`PocketBase create show error: ${res.status} ${await res.text()}`);
+  return toAgendaShow((await res.json()) as ArchiveItem);
+}
+
 // All genre names, for tag autocomplete in the UI.
 export async function listGenres(): Promise<string[]> {
   const res = await pbFetch(`/api/collections/genres/records?perPage=500&sort=name&fields=name`);

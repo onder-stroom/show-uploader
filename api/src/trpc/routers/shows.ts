@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { router, protectedProcedure } from '../trpc';
 import {
   listShows,
+  listStrands,
   listPublishedShows,
   listAllArchiveShows,
   listGenres,
@@ -14,6 +15,9 @@ import {
   type ArchivePatch,
 } from '../../services/shows-api';
 import { baseTitle } from '@show-uploader/domain';
+import { deps } from '../../deps';
+import { UseCaseError } from '../../usecases/errors';
+import { createShow } from '../../usecases/shows';
 import { generateMeta } from '../../services/groq';
 import { db } from '../../db/client';
 import { recordPlatformSync, getPlatformSyncs } from '../../db/queries';
@@ -50,6 +54,37 @@ export const showsRouter = router({
       });
     }
   }),
+
+  // The agenda's strands, for the "add a show" form.
+  listStrands: protectedProcedure.query(async () => {
+    try {
+      return await listStrands();
+    } catch (err) {
+      console.error('Failed to fetch strands:', err);
+      throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to fetch strands' });
+    }
+  }),
+
+  // Add a show the agenda does not have, as a draft archive record. The rules live in usecases/shows.ts.
+  create: protectedProcedure
+    .input(
+      z.object({
+        title: z.string().trim().min(1).max(200),
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+        endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+        strandId: z.string().min(1).nullish(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      try {
+        return await createShow(input, deps);
+      } catch (err) {
+        if (err instanceof UseCaseError) throw new TRPCError({ code: err.code, message: err.message });
+        console.error('Failed to create show:', err);
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Failed to create the show' });
+      }
+    }),
 
   // Shows already live elsewhere, for the "attach
   // a recording" picker. Filtered to ones missing cs-archive-video client-side

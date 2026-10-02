@@ -15,7 +15,7 @@ import type { CutJobPayload, CutStep } from '@show-uploader/domain';
 import type { PlatformJob, ShowUpload } from './db/queries';
 import type { JobPayload } from './queue';
 import type { RecordingsAgent } from './services/recordings-agent';
-import type { AgendaShow, ArchivePatch } from './services/shows-api';
+import type { AgendaShow, AgendaStrand, ArchivePatch, NewDraftShow } from './services/shows-api';
 import type { PreviewJobView } from './services/video-preview';
 
 export type UploadWithJobs = ShowUpload & { jobs: PlatformJob[] };
@@ -102,6 +102,12 @@ export interface Agenda {
   update(showId: string, patch: ArchivePatch): Promise<void>;
   /** Genre record ids for these names, creating any that don't exist yet. */
   resolveGenres(names: string[]): Promise<string[]>;
+  /** The agenda's strands (channels). */
+  listStrands(): Promise<AgendaStrand[]>;
+  /** The "to process" list: draft archive records. */
+  listDrafts(): Promise<AgendaShow[]>;
+  /** A new draft archive record for a show the agenda does not have. */
+  createDraft(input: NewDraftShow): Promise<AgendaShow>;
   /** Whether a show is on air now, and when heavy work may resume. Fails open. */
   liveState(now: Date): Promise<{ isLive: boolean; resumeAt: Date | null }>;
 }

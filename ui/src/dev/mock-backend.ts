@@ -35,6 +35,21 @@ function resolve(proc: string, input: unknown): unknown {
   switch (proc) {
     case 'shows.listShows':
       return shows;
+    case 'shows.listStrands':
+      return [
+        { id: 'strand_cs', name: 'coming soon', isDefault: true },
+        { id: 'strand_bos', name: 'De Bosbar', isDefault: false },
+      ];
+    case 'shows.create': {
+      const f = input as { title: string; date: string; startTime: string; endTime: string; strandId?: string | null };
+      const show = {
+        id: `show_new_${shows.length + 1}`, title: f.title, description: '', date: f.date, startTime: f.startTime, endTime: f.endTime,
+        imageUrl: null, tags: null, mediaLinks: [], showDescription: null, updated: new Date().toISOString(),
+        strand: f.strandId === 'strand_bos' ? { name: 'De Bosbar', isDefault: false } : { name: 'coming soon', isDefault: true },
+      };
+      shows.unshift(show);
+      return show;
+    }
     case 'shows.listGenres':
       return genres;
     case 'shows.listStates':
