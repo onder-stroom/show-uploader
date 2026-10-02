@@ -17,6 +17,7 @@ export function fakeDeps(opts: {
   live?: { isLive: boolean; resumeAt: Date | null };
   jingleS3Key?: string | null;
   recordings?: AgentRecording[] | null;
+  strands?: { id: string; name: string; isDefault: boolean }[];
   recordingsSecret?: string | null;
 } = {}) {
   const uploads = new Map((opts.uploads ?? []).map((u) => [u.id, u]));
@@ -106,6 +107,12 @@ export function fakeDeps(opts: {
       getShow: vi.fn(async (id: string) => shows.get(id) ?? null),
       update: vi.fn(async () => {}),
       resolveGenres: vi.fn(async (names: string[]) => names.map((n) => `genre-${n}`)),
+      listStrands: vi.fn(async () => opts.strands ?? [{ id: 'strand-cs', name: 'coming soon', isDefault: true }, { id: 'strand-bos', name: 'De Bosbar', isDefault: false }]),
+      listDrafts: vi.fn(async () => [...shows.values()]),
+      createDraft: vi.fn(async (input: { title: string; date: string; startTime: string; endTime: string; strandId: string | null }) => ({
+        id: 'new-show', title: input.title, description: '', date: input.date, startTime: input.startTime, endTime: input.endTime,
+        imageUrl: null, tags: null, mediaLinks: [], showDescription: null, strand: null, updated: '',
+      }) as AgendaShow),
       liveState: vi.fn(async () => opts.live ?? { isLive: false, resumeAt: null }),
     },
     queue: {
