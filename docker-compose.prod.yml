@@ -158,6 +158,10 @@ services:
     # registry MinIO still publishes to. Pinned rather than :latest since an
     # unattended host has no one watching for a breaking upgrade.
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.hotfix.7aa24e772
+    # quay.io no longer serves this tag (a pull answers "unauthorized"), which made every
+    # `docker compose pull`, and so every deploy, fail. The image is cached on the host, so
+    # never pull it. Replacing MinIO's image needs its own change.
+    pull_policy: never
     command: server /data --console-address ":9001"
     env_file: .env
     environment:
