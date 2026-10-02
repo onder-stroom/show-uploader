@@ -1,10 +1,12 @@
 import { Worker } from 'bullmq';
+import { RECORDING_CUTS_QUEUE, type CutJobPayload } from '@show-uploader/domain';
 import { redis, QUEUE_NAME, PREVIEW_QUEUE_NAME, COMPRESS_QUEUE_NAME } from './queue';
 import { processYoutube } from './jobs/youtube';
 import { processMixcloud } from './jobs/mixcloud';
 import { processArchive } from './jobs/archive';
 import { processCompress } from './jobs/compress';
 import { processPreview } from './jobs/preview';
+import { processCutRecording } from './jobs/cut-recording';
 import { reconcileStalledJobs, setJobStatus } from './db';
 import { sweepWorkspaces } from './services/workspace';
 import { backfillDurations } from './services/backfill-duration';
@@ -132,6 +134,26 @@ compressWorker.on('completed', (job) => {
 
 compressWorker.on('failed', (job, err) => {
   console.error(`Compress failed: ${job?.id}`, err.message);
+});
+
+// Cut lane: the PC does the cutting and uploading; this job only sequences it and waits,
+// so it never competes with an archive job for CPU or disk. One at a time: the PC's
+// uplink is the shared resource, and parallel uploads only slow each other down.
+const cutWorker = new Worker<CutJobPayload>(
+  RECORDING_CUTS_QUEUE,
+  async (job) => {
+    console.log(`Cutting recording ${job.data.ref} for show ${job.data.showId} (${job.id})`);
+    return processCutRecording(job, deps);
+  },
+  { connection: redis, concurrency: 1 }
+);
+
+cutWorker.on('completed', (job) => {
+  console.log(`Recording cut completed: ${job.id}`);
+});
+
+cutWorker.on('failed', (job, err) => {
+  console.error(`Recording cut failed: ${job?.id}`, err.message);
 });
 
 console.log('Worker started');

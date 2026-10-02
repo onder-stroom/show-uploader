@@ -13,7 +13,7 @@ pnpm workspace, Node 20, TypeScript everywhere.
 | `api/` | Express + tRPC, serves the UI build. Auth, PocketBase sync, S3 signing. |
 | `worker/` | BullMQ jobs: ffmpeg, YouTube, MixCloud, archive. |
 | `ui/` | React + Vite + MUI, themed per `DESIGN.md` via `ui/src/theme.ts`. |
-| `watcher/` | Windows drop-folder watcher (runs on the OBS machine, not in Docker). |
+| `watcher/` | The recordings service on the OBS PC (Windows service, not Docker): prepares recordings, cuts segments, uploads parts. Node/TS. See `watcher/README.md` and `docs/architecture/recordings-cut.md`. |
 | `packages/domain/` | Pure rules shared by api and worker: show slugs, S3 key layout, platform title/description formatting. |
 | `docs/architecture/` | Design rules that code must keep, e.g. `video-lifecycle.md`. |
 | `docs/superpowers/` | Historical specs and plans. Point-in-time; code wins where they disagree. |
@@ -46,6 +46,7 @@ interfaces, the real ones are built once, and tests use in-memory fakes:
 loudness pass, MP4 remux, m4a extraction, agenda links written to PB. Only then does
 it enqueue the queued YouTube / MixCloud jobs, which are thin uploads of those
 archived files. Don't add a platform job that re-downloads or re-trims the source.
+A recording cut on the OBS PC enters the same pipeline as a staged video bound to its show (see `docs/architecture/recordings-cut.md`).
 Read `docs/architecture/video-lifecycle.md` before touching upload/video state.
 
 **Where things live**
@@ -53,10 +54,11 @@ Read `docs/architecture/video-lifecycle.md` before touching upload/video state.
 | Concern | Use |
 |---|---|
 | Auth (REST + tRPC) | `api/src/auth/verify-token.ts` |
-| New API endpoints | tRPC routers in `api/src/trpc/routers/`. REST (`api/src/routes/`) only for what tRPC can't do: multipart upload, raw cover bytes, SSE, presence, `/api/public`, watcher. |
+| New API endpoints | tRPC routers in `api/src/trpc/routers/`. REST (`api/src/routes/`) only for what tRPC can't do: multipart upload, raw cover bytes, SSE, presence, `/api/public`, recordings preview and worker endpoints, legacy watcher. |
 | Rules behind an endpoint | `api/src/usecases/` (publish, retry, archive actions, metadata edit, preview). Routers only validate input, call a use case and map its `UseCaseError` to a tRPC code. |
 | PocketBase reads/writes | `api/src/services/shows-api.ts` (token cache, retries, genre mapping) |
 | Postgres | the stack's own `postgres` service (not Neon since 2026-09-23). Queries in `api/src/db/queries.ts` (takes `db` as a parameter) and `worker/src/db.ts`; TLS comes from `DATABASE_URI`'s `sslmode`, and in-stack needs none. Migrations run on api startup. |
+| OBS recordings and cuts | `api/src/usecases/recording-cuts.ts`, `worker/src/jobs/cut-recording.ts`, `watcher/` on the PC; the shared rules and agent protocol are in `@show-uploader/domain` (`recording-segments.ts`, `recordings-contract.ts`) |
 | S3 keys and folders | `@show-uploader/domain` (`storage-layout.ts`, `show-slug.ts`) |
 | S3 access / signing | `api/src/services/s3.ts`, `worker/src/services/s3.ts`; UI signs through the `storage.signObject` query |
 | ffmpeg / ffprobe | `worker/src/services/ffmpeg.ts` (trim, remux, loudness, `probeDuration`) |
@@ -146,6 +148,7 @@ can't also be given `member`, which is why admin alone passes. Other project rol
   (= tags), media links and image; Postgres `show_uploads` is a working copy. Where they
   disagree, PB wins. Platform titles are derived from the PB title by appending
   `<DD.MM.YYYY> @ coming soon`, and that suffix never goes back into PB.
+- **Recordings on the OBS PC are not state we own.** The operator deletes MKVs and MP4s by hand. The PC's folder is the truth, there is no recordings table, and a missing file ends a cut as `source_gone`, never an alert. Agenda times only suggest cuts; the operator confirms every segment.
 - **Covers go into PB's `image` field**, never S3. The api proxies the upload
   (`POST /api/shows/:id/cover`). S3/MinIO holds only video/audio.
 - **PB returns 404/400, not 401, to an anonymous caller.** An empty "to process" list,

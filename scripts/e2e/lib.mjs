@@ -32,6 +32,9 @@ export const env = {
   ZITADEL_DOMAIN: 'zitadel.e2e',
   ZITADEL_CLIENT_ID: 'e2e',
   JINGLE_S3_KEY: 'jingles/e2e.m4a',
+  // The recordings service the suite starts itself, on a deliberately odd port.
+  RECORDINGS_AGENT_URL: 'http://127.0.0.1:18787',
+  RECORDINGS_AGENT_TOKEN: 'e2e-recordings-token-0123456789',
 };
 
 const CONTAINERS = ['e2e-minio', 'e2e-pg', 'e2e-redis'];

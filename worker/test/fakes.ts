@@ -1,5 +1,6 @@
 import fs from 'fs';
 import { vi } from 'vitest';
+import type { AgentCut } from '@show-uploader/domain';
 import type { WorkerDeps } from '../src/ports';
 
 /**
@@ -24,6 +25,7 @@ export function fakeDeps(opts: {
   }
   const statuses: { jobId: string; status: string; extra?: Record<string, unknown> }[] = [];
   const upload = opts.upload === undefined ? { show_id: 'show-1', jingle_s3_key: null } : opts.upload;
+  const pcCuts = new Map<string, AgentCut>();
 
   const deps = {
     store: {
@@ -58,7 +60,36 @@ export function fakeDeps(opts: {
     platformQueue: { add: vi.fn(async () => {}) },
     youtube: { upload: vi.fn(async () => 'https://youtu.be/new') },
     mixcloud: { upload: vi.fn(async () => 'https://www.mixcloud.com/coming_soon/new/') },
-    config: { appPublicUrl: opts.appPublicUrl === undefined ? 'https://uploader.test' : opts.appPublicUrl },
+    // A PC that does what it is asked, instantly. Tests script deviations with
+    // mockResolvedValueOnce / mockImplementation on these.
+    agent: {
+      startCut: vi.fn(async (r: { cutId: string }): Promise<AgentCut> => {
+        const c: AgentCut = { cutId: r.cutId, state: 'cut', sizeBytes: 40, etags: null, reason: null };
+        pcCuts.set(r.cutId, c);
+        return c;
+      }),
+      cut: vi.fn(async (id: string) => pcCuts.get(id) ?? null),
+      upload: vi.fn(async (id: string): Promise<AgentCut> => {
+        const c: AgentCut = { ...pcCuts.get(id)!, state: 'done', etags: [{ n: 1, etag: '"e"' }] };
+        pcCuts.set(id, c);
+        return c;
+      }),
+      drop: vi.fn(async (id: string) => void pcCuts.delete(id)),
+    },
+    sessions: {
+      open: vi.fn(async (_i: { size: number }) => ({
+        sessionId: 'sess-1',
+        partSize: 16,
+        parts: [1, 2, 3].map((n) => ({ n, url: `https://s3.test/part/${n}` })),
+        completed: false,
+      })),
+      complete: vi.fn(async (_id: string) => {}),
+      abort: vi.fn(async (_id: string) => {}),
+    },
+    config: {
+      appPublicUrl: opts.appPublicUrl === undefined ? 'https://uploader.test' : opts.appPublicUrl,
+      cutPoll: { intervalMs: 1, cutTimeoutMs: 1000, uploadTimeoutMs: 1000 },
+    },
   } satisfies WorkerDeps;
 
   return {
@@ -70,7 +101,13 @@ export function fakeDeps(opts: {
   };
 }
 
-/** A BullMQ job as the jobs read it: payload plus a progress sink. */
-export function fakeJob<T>(data: T, id = 'bull-1') {
-  return { id, data, updateProgress: vi.fn(async () => {}) } as never;
+/** A BullMQ job as the jobs read it: payload, a progress sink, and the retry counters. */
+export function fakeJob<T>(data: T, id = 'bull-1', extra: { attempts?: number; attemptsMade?: number } = {}) {
+  return {
+    id,
+    data,
+    updateProgress: vi.fn(async () => {}),
+    opts: { attempts: extra.attempts ?? 3 },
+    attemptsMade: extra.attemptsMade ?? 0,
+  } as never;
 }

@@ -18,6 +18,7 @@ most of it ffmpeg.
 |---|---|
 | `worker.mjs` | The built worker consumes a real archive job: trims, remuxes, extracts audio, hands off to the platform jobs, writes the agenda links back, then shrink and preview. |
 | `api.mjs` | The built api use cases on their real adapters, with the worker consuming what they queue: preview, publish, retry, metadata edit, shrink, and the duplicate-publish guard. |
+| `recordings.mjs` | The built recordings service prepares a real 3-track MKV, the worker cuts two segments through it, parts land on S3 and are staged per show, the archive keeps the exact length, and a recording deleted by hand is refused. |
 | `lib.mjs` | The stack, fixtures and the reporter. |
 
 ## Why it is safe

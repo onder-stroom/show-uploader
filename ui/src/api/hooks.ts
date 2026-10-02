@@ -407,3 +407,45 @@ export function useClaimPending() {
     onSuccess: () => qc.invalidateQueries(trpc.watcher.pathFilter()),
   });
 }
+
+// OBS PC recordings ------------------------------------------------------------
+
+// The PC is polled gently: it can be off, and "not reachable" is a normal answer.
+export function useRecordings() {
+  const trpc = useTRPC();
+  return useQuery(trpc.recordings.list.queryOptions(undefined, { refetchInterval: 15_000 }));
+}
+
+export function useRecordingPeaks(ref: string | null) {
+  const trpc = useTRPC();
+  return useQuery(trpc.recordings.peaks.queryOptions({ ref: ref ?? '' }, { enabled: !!ref, staleTime: Infinity }));
+}
+
+// Keyed by recording, like useSignedUrl: signed once per viewing session and served from
+// cache, so the <video src> never swaps while it plays (see AGENTS.md).
+export function usePreviewPath(ref: string | null) {
+  const trpc = useTRPC();
+  return useQuery(
+    trpc.recordings.signPreview.queryOptions({ ref: ref ?? '' }, { enabled: !!ref, staleTime: 5 * 60 * 60_000 })
+  );
+}
+
+export function useStartCuts() {
+  const trpc = useTRPC();
+  return useMutation(trpc.recordings.startCuts.mutationOptions());
+}
+
+// Polls while any cut is still running; stops once every one is done or failed.
+export function useCutStatuses(cutIds: string[]) {
+  const trpc = useTRPC();
+  return useQuery(
+    trpc.recordings.cutStatuses.queryOptions(
+      { cutIds },
+      {
+        enabled: cutIds.length > 0,
+        refetchInterval: (query) =>
+          query.state.data?.every((s) => s.state === 'done' || s.state === 'failed') ? false : 3_000,
+      }
+    )
+  );
+}

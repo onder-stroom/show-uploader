@@ -33,6 +33,7 @@ import AccessDenied from './pages/AccessDenied';
 import AuthFailed from './pages/AuthFailed';
 import { markSessionHealthy, requestSignin, signOut } from './auth/signin';
 import Storage from './pages/Storage';
+import Recordings from './pages/Recordings';
 import { pagedSearch, type PagedSearch } from './components/Pager';
 
 function AuthedLayout() {
@@ -91,6 +92,7 @@ function AuthedLayout() {
     { to: '/', label: 'upload' },
     { to: '/history', label: 'jobs queue' },
     { to: '/archive', label: 'archive' },
+    { to: '/recordings', label: 'recordings' },
     { to: '/storage', label: 'storage' },
   ] as const;
   const isActive = (to: string) => (to === '/' ? pathname === '/' : pathname.startsWith(to));
@@ -271,6 +273,12 @@ const storageRoute = createRoute({
   component: Storage,
 });
 
+const recordingsRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: '/recordings',
+  component: Recordings,
+});
+
 const historyRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: '/history',
@@ -283,7 +291,7 @@ const historyRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   callbackRoute,
-  authedRoute.addChildren([indexRoute, uploadRoute, historyRoute, archiveRoute, storageRoute]),
+  authedRoute.addChildren([indexRoute, uploadRoute, historyRoute, archiveRoute, storageRoute, recordingsRoute]),
 ]);
 
 // An unknown path renders a small in-app page rather than a blank screen —

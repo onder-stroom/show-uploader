@@ -11,7 +11,7 @@
  * none of this — including the fixtures — reaches the production bundle.
  */
 
-import { shows, uploads, archiveStates, genres, videoInfo } from './fixtures';
+import { shows, uploads, archiveStates, genres, videoInfo, recordings } from './fixtures';
 
 // tRPC batch responses are positional: one entry per procedure in the URL.
 // There is no real file to play in mock mode. A data: URI keeps the <video>
@@ -23,6 +23,7 @@ const mockSignedUrl = () => `data:video/mp4;base64,#sig=${Math.random().toString
 // screen can switch between shows without a reload.
 const MOCK_CONVERT_POLLS = 4;
 const previewPolls = new Map<string, number>();
+const cutPolls = new Map<string, number>();
 const previewMp4Key = (key: string) => key.replace(/\.[^./]+$/, '.mp4');
 
 function trpcBody(datas: unknown[]) {
@@ -163,6 +164,26 @@ function resolve(proc: string, input: unknown): unknown {
       return { ok: true, jobId: 'job_mock' };
     // Deliberately unhealthy figures: a nearly-full object disk and a stale job
     // folder, so the warning states are reachable without staging a real outage.
+    case 'recordings.list':
+      return { reachable: true, recordings };
+    case 'recordings.peaks':
+      // A plausible set: quiet gaps between louder stretches, one value per second.
+      return Array.from({ length: 14_400 }, (_, i) => Math.round((0.15 + 0.6 * Math.abs(Math.sin(i / 400)) * Math.abs(Math.sin(i * 12.9898))) * 1000) / 1000);
+    case 'recordings.signPreview':
+      return { path: mockSignedUrl() };
+    case 'recordings.startCuts': {
+      const segs = (input as { segments: { showId: string }[] }).segments;
+      return { cuts: segs.map((s) => ({ cutId: `mock-cut-${s.showId}`, showId: s.showId })) };
+    }
+    case 'recordings.cutStatuses': {
+      // Walk each cut through the real states, one per poll, so the progress UI is reachable.
+      const states = ['queued', 'cutting', 'uploading', 'finishing', 'done'] as const;
+      return ((input as { cutIds: string[] }).cutIds).map((cutId) => {
+        const n = cutPolls.get(cutId) ?? 0;
+        cutPolls.set(cutId, n + 1);
+        return { cutId, state: states[Math.min(n, states.length - 1)], error: null };
+      });
+    }
     case 'storage.overview':
       return {
         disk: { path: '/mnt/storage', totalBytes: 2_000_000_000_000, freeBytes: 180_000_000_000, usedBytes: 1_820_000_000_000 },

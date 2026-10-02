@@ -1,0 +1,20 @@
+<!-- watcher/service/show-uploader-recordings.xml
+     WinSW (https://github.com/winsw/winsw) service definition. Rename the WinSW exe to
+     show-uploader-recordings.exe and keep this file next to it. The service runs the single-file bundle
+     (`pnpm --filter @show-uploader/watcher bundle`) from C:\show-uploader\recordings, where its .env lives.
+     Check the node.exe path with (Get-Command node).Source. -->
+<service>
+  <id>ShowUploaderRecordings</id>
+  <name>Show Uploader Recordings</name>
+  <description>Prepares OBS recordings and cuts per-artist segments for the uploader.</description>
+  <executable>C:\Program Files\nodejs\node.exe</executable>
+  <arguments>recordings-service.js</arguments>
+  <workingdirectory>C:\show-uploader\recordings</workingdirectory>
+  <startmode>Automatic</startmode>
+  <priority>BelowNormal</priority>
+  <onfailure action="restart" delay="10 sec"/>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+</service>

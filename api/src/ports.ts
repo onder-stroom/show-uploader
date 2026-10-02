@@ -11,8 +11,10 @@
  * HTTP into calls. Simple reads there still call services directly; anything
  * with a rule in it goes through a use case and these ports.
  */
+import type { CutJobPayload, CutStep } from '@show-uploader/domain';
 import type { PlatformJob, ShowUpload } from './db/queries';
 import type { JobPayload } from './queue';
+import type { RecordingsAgent } from './services/recordings-agent';
 import type { AgendaShow, ArchivePatch } from './services/shows-api';
 import type { PreviewJobView } from './services/video-preview';
 
@@ -47,9 +49,51 @@ export interface UploadStore {
 /** The S3 bucket. */
 export interface ObjectStore {
   info(key: string): Promise<{ exists: boolean; size: number | null }>;
-  uploadedParts(key: string, uploadId: string): Promise<{ Size?: number }[]>;
+  uploadedParts(key: string, uploadId: string): Promise<{ PartNumber?: number; Size?: number }[]>;
   /** The `shows/<folder>/` holding an agenda record's recording, if any. */
   findShowFolder(show: AgendaShow): Promise<string | null>;
+  /** Multipart uploads: start one, presign a part, finish it, abandon it. */
+  createMultipart(key: string, contentType: string): Promise<string>;
+  presignPart(key: string, uploadId: string, partNumber: number): Promise<string>;
+  completeMultipart(key: string, uploadId: string): Promise<void>;
+  abortMultipart(key: string, uploadId: string): Promise<void>;
+}
+
+export type UploadSession = {
+  id: string;
+  show_id: string | null;
+  s3_key: string;
+  s3_upload_id: string;
+  filename: string;
+  size_bytes: string;
+  content_type: string;
+  part_size: number;
+  status: string;
+  /** Set when the session uploads a segment cut from an OBS recording. */
+  cut_id: string | null;
+};
+
+export type NewSession = {
+  showId: string | null;
+  key: string;
+  s3UploadId: string;
+  filename: string;
+  size: number;
+  contentType: string;
+  partSize: number;
+  cut: { cutId: string; ref: string; startS: number; endS: number } | null;
+};
+
+/** Resumable multipart upload sessions, and the staged video they produce. */
+export interface UploadSessions {
+  /** Returns the new session's id. */
+  create(data: NewSession): Promise<string>;
+  get(id: string): Promise<UploadSession | null>;
+  /** The live (not aborted) session for a cut, so a retried request reuses it. */
+  findByCutId(cutId: string): Promise<UploadSession | null>;
+  setStatus(id: string, status: 'completed' | 'aborted'): Promise<void>;
+  /** Record the video as staged for the show; replaces any earlier one. */
+  stage(showId: string, key: string, filename: string, sizeBytes: number): Promise<void>;
 }
 
 /** The agenda: PocketBase archive records and the broadcast schedule. */
@@ -91,17 +135,39 @@ export interface Presence {
   broadcastClaims(): void;
 }
 
+export type { RecordingsAgent };
+
+/** The queue view of one cut. */
+export type CutJobView = {
+  status: 'waiting' | 'active' | 'delayed' | 'completed' | 'failed' | 'paused' | 'unknown';
+  step: CutStep | null;
+  failedReason: string | null;
+} | null;
+
+/** The queue the worker's cut-recording job runs from. */
+export interface CutQueue {
+  /** Idempotent per cutId: enqueueing a cut that is waiting or running changes nothing. */
+  enqueue(payload: CutJobPayload): Promise<void>;
+  /** The cut's job state, or null when there is none. */
+  job(cutId: string): Promise<CutJobView>;
+}
+
 export type ApiConfig = {
   /** The jingle prepended on MixCloud, if one is configured. */
   jingleS3Key: string | null;
+  /** Signs preview paths; the agent token. */
+  recordingsSecret: string | null;
 };
 
 export type ApiDeps = {
   uploads: UploadStore;
   objects: ObjectStore;
+  sessions: UploadSessions;
   agenda: Agenda;
   queue: JobQueue;
   platforms: PlatformMetadata;
   presence: Presence;
+  recordings: RecordingsAgent;
+  cuts: CutQueue;
   config: ApiConfig;
 };

@@ -17,6 +17,15 @@ const schema = z.object({
   // internal docker host is useless here. Unset means those links are skipped.
   APP_PUBLIC_URL: z.string().url().optional(),
   WATCHER_API_KEY: z.string().default('change-me'),
+  // The recordings service on the OBS PC (Tailscale). Unset means cut jobs fail with a
+  // clear "not configured" message instead of hanging.
+  RECORDINGS_AGENT_URL: z.string().url().optional(),
+  RECORDINGS_AGENT_TOKEN: z.string().min(16).optional(),
+  CUT_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(3000),
+  // A cut is a stream copy (seconds); an upload is bound by the PC's uplink, and its
+  // presigned part URLs live six hours.
+  CUT_WAIT_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
+  UPLOAD_WAIT_MS: z.coerce.number().int().positive().default(6 * 60 * 60 * 1000),
   YOUTUBE_CLIENT_ID: z.string().optional(),
   YOUTUBE_CLIENT_SECRET: z.string().optional(),
   YOUTUBE_REFRESH_TOKEN: z.string().optional(),
