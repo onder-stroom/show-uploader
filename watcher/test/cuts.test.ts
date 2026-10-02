@@ -16,6 +16,7 @@ function make(over: Partial<CutDeps> = {}) {
       get: vi.fn((ref: string) => (ref === 'known' ? ({ ref: 'known', videoCodec: 'hevc' } as never) : null)),
       sourceFor: vi.fn(() => source),
       recordUpload: vi.fn((_ref: string, cutId: string, at: number) => void uploaded.push({ cutId, at })),
+      pin: vi.fn(() => () => {}),
     },
     cutFile: vi.fn(async (o) => void fs.writeFileSync(o.output, Buffer.alloc(40, 7))),
     putPart: vi.fn(async (_url: string, body: Buffer) => `"etag-${body.length}"`),
@@ -45,6 +46,26 @@ describe('start', () => {
     await manager.idle();
     expect(manager.get('cut1')).toMatchObject({ state: 'cut', sizeBytes: 40 });
     expect(deps.cutFile).toHaveBeenCalledWith(expect.objectContaining({ input: '/rec/master.mp4', startS: 3, endS: 7, videoCodec: 'hevc' }));
+  });
+
+  it('keeps the recording pinned while ffmpeg reads it, and releases it however the cut ends', async () => {
+    const release = vi.fn();
+    const pin = vi.fn(() => release);
+    const a = make({ library: { ...make().deps.library, pin } });
+    a.manager.start(req);
+    expect(pin).toHaveBeenCalledWith('known');
+    expect(release).not.toHaveBeenCalled();
+    await a.manager.idle();
+    expect(release).toHaveBeenCalledTimes(1);
+
+    release.mockClear();
+    const b = make({
+      library: { ...make().deps.library, pin },
+      cutFile: vi.fn(async () => { throw new Error('boom'); }),
+    });
+    b.manager.start({ ...req, cutId: 'cut2' });
+    await b.manager.idle();
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   it('uses audio stream 0 for an MP4 master and the configured mix track for an original', async () => {

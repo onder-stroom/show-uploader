@@ -3,7 +3,7 @@ import type { AgentRecording } from '@show-uploader/domain';
 import { verifyPreview } from '../../src/services/preview-signature';
 import { UseCaseError } from '../../src/usecases/errors';
 import {
-  cutIdFor, cutStatuses, deriveCutStatus, listRecordings, openCutSession, recordingPeaks, signPreviewPath, startCuts,
+  cutIdFor, cutStatuses, deriveCutStatus, listRecordings, openCutSession, recordingPeaks, rescanRecordings, signPreviewPath, startCuts,
 } from '../../src/usecases/recording-cuts';
 import { fakeDeps } from '../fakes';
 
@@ -28,6 +28,16 @@ describe('listRecordings', () => {
   it('reports the recordings when the PC answers and "unreachable" when it does not', async () => {
     expect(await listRecordings(fakeDeps({ recordings: [rec()] }))).toEqual({ reachable: true, recordings: [rec()] });
     expect(await listRecordings(fakeDeps({ recordings: null }))).toEqual({ reachable: false });
+  });
+});
+
+describe('rescanRecordings', () => {
+  it('asks the PC to rescan and answers like the list, reachable or not', async () => {
+    const deps = fakeDeps({ recordings: [rec()] });
+    expect(await rescanRecordings(deps)).toEqual({ reachable: true, recordings: [rec()] });
+    expect(deps.recordings.rescan).toHaveBeenCalledTimes(1);
+    expect(deps.recordings.list).not.toHaveBeenCalled();
+    expect(await rescanRecordings(fakeDeps({ recordings: null }))).toEqual({ reachable: false });
   });
 });
 

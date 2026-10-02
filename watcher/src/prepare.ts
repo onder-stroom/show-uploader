@@ -25,6 +25,19 @@ export async function prepareRecording(
   deps: { library: Library; media: Media; mixAudioStream: number },
   ref: string
 ): Promise<Sidecar | null> {
+  // A rescan must not delete the work folder under a running ffmpeg.
+  const unpin = deps.library.pin(ref);
+  try {
+    return await prepare(deps, ref);
+  } finally {
+    unpin();
+  }
+}
+
+async function prepare(
+  deps: { library: Library; media: Media; mixAudioStream: number },
+  ref: string
+): Promise<Sidecar | null> {
   const { library, media, mixAudioStream } = deps;
   const initial = library.get(ref);
   if (!initial) return null;

@@ -166,6 +166,8 @@ function resolve(proc: string, input: unknown): unknown {
     // folder, so the warning states are reachable without staging a real outage.
     case 'recordings.list':
       return { reachable: true, recordings };
+    case 'recordings.rescan':
+      return { reachable: true, recordings };
     case 'recordings.peaks':
       // A plausible set: quiet gaps between louder stretches, one value per second.
       return Array.from({ length: 14_400 }, (_, i) => Math.round((0.15 + 0.6 * Math.abs(Math.sin(i / 400)) * Math.abs(Math.sin(i * 12.9898))) * 1000) / 1000);

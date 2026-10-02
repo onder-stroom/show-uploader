@@ -12,7 +12,8 @@ import Typography from '@mui/material/Typography';
 import { suggestSegments, validateSegments } from '@domain/recording-segments';
 import { cutFilename, type AgentRecording } from '@domain/recordings-contract';
 import {
-  useCutStatuses, usePreviewPath, useRecordingPeaks, useRecordings, useShows, useStaged, useStartCuts, useUploadingProgress,
+  useCutStatuses, usePreviewPath, useRecordingPeaks, useRecordings, useRescanRecordings, useShows, useStaged, useStartCuts,
+  useUploadingProgress,
 } from '../api/hooks';
 import { humanDuration } from '../format';
 import { c } from '../theme';
@@ -32,6 +33,7 @@ const brussels = new Intl.DateTimeFormat('nl-BE', { timeZone: 'Europe/Brussels',
 
 export default function Recordings() {
   const q = useRecordings();
+  const rescan = useRescanRecordings();
   // The opened recording itself, not a ref looked up in the latest list: one poll that
   // fails or lacks it must not unmount the editor and lose the operator's drafts.
   const [opened, setOpened] = useState<AgentRecording | null>(null);
@@ -46,12 +48,24 @@ export default function Recordings() {
   }
 
   const header = (
-    <Box>
-      <Typography variant="h1">recordings</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-        cut a night into one upload per artist. cuts are lossless and only the cut parts leave the PC.
-      </Typography>
-    </Box>
+    <Stack direction="row" spacing={2} sx={{ alignItems: 'flex-start', justifyContent: 'space-between' }}>
+      <Box>
+        <Typography variant="h1">recordings</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+          cut a night into one upload per artist. cuts are lossless and only the cut parts leave the PC.
+        </Typography>
+      </Box>
+      {!opened && (
+        <Stack spacing={0.5} sx={{ alignItems: 'flex-end' }}>
+          <Button size="small" variant="outlined" disabled={rescan.isPending} onClick={() => rescan.mutate()}>
+            {rescan.isPending ? 'scanning…' : 'rescan'}
+          </Button>
+          {rescan.isError && (
+            <Typography variant="caption" sx={{ color: c.danger }}>could not rescan: {rescan.error.message}</Typography>
+          )}
+        </Stack>
+      )}
+    </Stack>
   );
 
   // Off, or off the tailnet. Normal, not an error: nothing already uploaded is affected.

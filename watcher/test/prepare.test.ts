@@ -52,6 +52,23 @@ describe('prepareRecording', () => {
     expect(media.remux).toHaveBeenCalledWith(expect.objectContaining({ audioStream: 0, videoCodec: 'hevc' }));
   });
 
+  it('survives a rescan that finds the original deleted mid-prepare, and is forgotten once it ends', async () => {
+    const ref = register('night.mkv');
+    const original = lib.get(ref)!.originalPath;
+    const media = fakeMedia({
+      remux: vi.fn(async (o) => {
+        fs.rmSync(original); // the operator deletes it while ffmpeg runs
+        lib.sync(NOW + 10_000); // and a rescan comes in
+        expect(fs.existsSync(path.dirname(o.output))).toBe(true);
+        fs.writeFileSync(o.output, 'mp4');
+      }),
+    });
+    await prepareRecording({ library: lib, media, mixAudioStream: 0 }, ref);
+    expect(lib.list()).toHaveLength(1);
+    lib.sync(NOW + 20_000);
+    expect(lib.list()).toEqual([]);
+  });
+
   it('previews from the master, whose single audio stream is index 0, whatever the mix track index is', async () => {
     const ref = register('night.mkv');
     const media = fakeMedia();

@@ -58,7 +58,26 @@ export function parseRecordedAt(filename: string, fallbackMs: number): number {
 }
 
 export class Library {
+  /** Recordings that ffmpeg is reading or writing right now, with how many holders each has. */
+  private readonly pins = new Map<string, number>();
+
   constructor(private readonly o: { recordingsDir: string; workDir: string; stableWindowMs: number }) {}
+
+  /**
+   * Mark a recording as in use, so a sync cannot delete its work folder under a running
+   * ffmpeg. Returns the release; call it when the work ends, however it ends.
+   */
+  pin(ref: string): () => void {
+    this.pins.set(ref, (this.pins.get(ref) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const n = (this.pins.get(ref) ?? 1) - 1;
+      if (n > 0) this.pins.set(ref, n);
+      else this.pins.delete(ref);
+    };
+  }
 
   paths(ref: string): WorkPaths {
     if (!REF_RE.test(ref)) throw new Error(`invalid recording ref: ${JSON.stringify(ref)}`);
@@ -72,7 +91,11 @@ export class Library {
     };
   }
 
-  /** Scan the folder, register new stable files, forget recordings with nothing left on disk. */
+  /**
+   * Scan the folder, register new stable files, and forget recordings whose original was
+   * deleted. The derived files go with it: the operator removed the recording, so a card
+   * for it is noise. A recording in use is left for the next scan.
+   */
   sync(nowMs: number): { recordingActive: boolean } {
     const { ready, growing } = this.scan(nowMs);
 
@@ -109,7 +132,13 @@ export class Library {
     }
 
     for (const s of this.list()) {
-      if (!fs.existsSync(s.originalPath) && !fs.existsSync(this.paths(s.ref).master)) this.remove(s.ref);
+      if (fs.existsSync(s.originalPath) || this.pins.has(s.ref)) continue;
+      try {
+        this.remove(s.ref);
+      } catch (err) {
+        // A file a player still holds open (Windows) refuses deletion; the next scan tries again.
+        console.warn(`could not forget ${s.filename}:`, err instanceof Error ? err.message : err);
+      }
     }
     return { recordingActive: growing.length > 0 };
   }

@@ -67,6 +67,13 @@ export function createServer(deps: {
     res.json(deps.library.list().map(toRecording));
   });
 
+  // Look at the folder now instead of at the next background pass, which waits for a
+  // running prepare to finish. Cheap: it only lists the folder.
+  app.post('/v1/rescan', (_req, res) => {
+    deps.library.sync(Date.now());
+    res.json(deps.library.list().map(toRecording));
+  });
+
   app.get('/v1/recordings/:ref/preview', (req, res) => {
     const s = deps.library.get(req.params.ref);
     const file = s?.hasPreview ? path.resolve(deps.library.paths(s.ref).preview) : null;

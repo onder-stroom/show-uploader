@@ -9,6 +9,10 @@ code must keep. Design rationale: `docs/superpowers/specs/2026-10-01-recordings-
 > any file in it at any time. Nothing here stores recording state, and a missing file is
 > never an error or an alert.** Video state still lives where
 > `docs/architecture/video-lifecycle.md` puts it: the show record.
+>
+> Deleting a recording's original removes it from the list, derived files included. A
+> recording with a prepare or a cut running is pinned (`Library.pin`) and forgotten at the
+> next scan once that work ends. The page's rescan button runs the scan now.
 
 ## The flow
 
