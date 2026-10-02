@@ -170,6 +170,22 @@ describe('publishToPlatform', () => {
     });
   });
 
+  it('names a non-default strand in the platform title, and keeps the house brand otherwise', async () => {
+    const bosbar = fakeDeps({
+      shows: [{ ...show, strand: { name: 'De Bosbar', isDefault: false } }],
+      uploads: [uploadRow({}, [{ platform: 'youtube', status: 'done' }])],
+    });
+    await publishToPlatform('show-1', 'youtube', bosbar);
+    expect(bosbar.queued[0].payload).toMatchObject({ title: 'Palmbomen II 08.08.2026 @ De Bosbar' });
+
+    const house = fakeDeps({
+      shows: [{ ...show, strand: { name: 'coming soon', isDefault: true } }],
+      uploads: [uploadRow({}, [{ platform: 'youtube', status: 'done' }])],
+    });
+    await publishToPlatform('show-1', 'youtube', house);
+    expect(house.queued[0].payload).toMatchObject({ title: 'Palmbomen II 08.08.2026 @ coming soon' });
+  });
+
   // An archived show whose upload row was deleted gets one rebuilt from S3.
   it('adopts an archived show that has no upload row', async () => {
     const deps = fakeDeps({

@@ -147,7 +147,9 @@ can't also be given `member`, which is why admin alone passes. Other project rol
 - **PocketBase is the data master.** The PB archive record owns title, notes, genres
   (= tags), media links and image; Postgres `show_uploads` is a working copy. Where they
   disagree, PB wins. Platform titles are derived from the PB title by appending
-  `<DD.MM.YYYY> @ coming soon`, and that suffix never goes back into PB.
+  `<DD.MM.YYYY> @ <strand>` (`@ coming soon` for the default strand, e.g. `@ De Bosbar`
+  for another one; the strand is `archive.strand` in PB), and that suffix never goes
+  back into PB. A non-default strand is also the first platform tag, never a PB genre.
 - **Recordings on the OBS PC are not state we own.** The operator deletes MKVs and MP4s by hand. The PC's folder is the truth, there is no recordings table, and a missing file ends a cut as `source_gone`, never an alert. Agenda times only suggest cuts; the operator confirms every segment.
 - **Covers go into PB's `image` field**, never S3. The api proxies the upload
   (`POST /api/shows/:id/cover`). S3/MinIO holds only video/audio.

@@ -1,6 +1,6 @@
 import { env } from '../env';
 import type { ArchiveRecord } from '../pocketbase-types';
-import { platformOfLabel, platformTitle } from '@show-uploader/domain';
+import { otherStrandName, platformOfLabel, platformTags, platformTitle, strandOfTitle, type ShowStrand } from '@show-uploader/domain';
 import { syncYoutubeMetadata, syncMixcloudMetadata } from './platform-metadata';
 
 // Server-side calls prefer the internal host (no NAT hairpin on a single box).
@@ -22,6 +22,9 @@ export type AgendaShow = {
   // the upload description: seed from it when the episode has no notes of its own,
   // and feed it to the AI suggestion. Null when there's no linked show.
   showDescription: string | null;
+  // The archive record's strand (channel): "coming soon" is the default one, others
+  // (e.g. "De Bosbar") mark a show that is not a coming soon one. Null when unset.
+  strand: ShowStrand | null;
   // PocketBase's own record timestamp — when anything on the record last
   // changed. Drives the "last updated" sort on the archive catalogue.
   updated: string;
@@ -39,14 +42,18 @@ type ArchiveItem = Pick<
 > & {
   collectionId: string;
   updated?: string;
-  expand?: { genres?: { name: string }[]; series?: { description?: string } };
+  expand?: {
+    genres?: { name: string }[];
+    series?: { description?: string };
+    strand?: { name?: string; isDefault?: boolean };
+  };
 };
 
 // The relation-expand string used everywhere we read an archive record — the
 // genre names for tags + the linked show's description for the upload context.
-const ARCHIVE_EXPAND = 'genres,series';
+const ARCHIVE_EXPAND = 'genres,series,strand';
 const ARCHIVE_FIELDS =
-  'id,title,notes,startTime,endTime,image,genres,mediaLinks,collectionId,updated,expand.genres.name,expand.series.description';
+  'id,title,notes,startTime,endTime,image,genres,mediaLinks,collectionId,updated,expand.genres.name,expand.series.description,expand.strand.name,expand.strand.isDefault';
 
 export function toAgendaShow(rec: ArchiveItem): AgendaShow {
   const start = splitDateTime(rec.startTime);
@@ -65,6 +72,7 @@ export function toAgendaShow(rec: ArchiveItem): AgendaShow {
     tags: rec.expand?.genres?.length ? rec.expand.genres.map((g) => g.name).filter(Boolean) : null,
     mediaLinks: Array.isArray(rec.mediaLinks) ? (rec.mediaLinks as MediaLink[]) : [],
     showDescription: rec.expand?.series?.description || null,
+    strand: rec.expand?.strand?.name ? { name: rec.expand.strand.name, isDefault: !!rec.expand.strand.isDefault } : null,
     updated: rec.updated ?? '',
   };
 }
@@ -193,10 +201,11 @@ export async function syncShowToPlatforms(
 ): Promise<Record<string, string> | null> {
   const show = await getArchiveShow(id);
   if (!show) return null;
+  const title = platformTitle(show.title, show.date, otherStrandName(show.strand));
   const edit = {
-    title: platformTitle(show.title, show.date),
+    title,
     description: show.description ?? '',
-    tags: show.tags ?? [],
+    tags: platformTags(show.tags ?? [], strandOfTitle(title)),
   };
   const results: Record<string, string> = {};
   for (const link of show.mediaLinks) {
