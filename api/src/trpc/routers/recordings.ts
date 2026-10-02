@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { deps } from '../../deps';
 import { UseCaseError } from '../../usecases/errors';
-import { cutStatuses, listRecordings, recordingPeaks, signPreviewPath, startCuts } from '../../usecases/recording-cuts';
+import { cutStatuses, listRecordings, recordingPeaks, rescanRecordings, signPreviewPath, startCuts } from '../../usecases/recording-cuts';
 import { protectedProcedure, router } from '../trpc';
 
 // Validation and error mapping only. The rules live in usecases/recording-cuts.ts.
@@ -22,6 +22,9 @@ const Segment = z.object({
 export const recordingsRouter = router({
   /** Recordings on the OBS PC, or `{ reachable: false }`. */
   list: protectedProcedure.query(() => listRecordings(deps)),
+
+  /** Ask the PC to look at its folder now, so files deleted by hand disappear at once. */
+  rescan: protectedProcedure.mutation(() => rescanRecordings(deps)),
 
   peaks: protectedProcedure.input(Ref).query(async ({ input }) => {
     try {

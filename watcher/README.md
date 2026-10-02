@@ -31,8 +31,11 @@ file on your dev machine; no git, pnpm or build is needed on the PC.
 
 - Logs: next to the WinSW exe. Status: the uploader's Recordings page.
 - Updating: build a new bundle (step 1), stop the service, replace `recordings-service.js` (keep `.env`), start the service.
-- Deleting recordings by hand is fine at any time. The service forgets a recording once
-  neither its MKV nor its MP4 master is left.
+- Deleting recordings by hand is fine at any time. Delete the MKV and the service forgets the
+  recording, including its MP4 master, preview and waveform, at the next scan (every
+  `SCAN_INTERVAL_MS`, but a scan waits for a running prepare). The Recordings page has a
+  **rescan** button (`POST /v1/rescan`) that looks at the folder at once. A recording whose cut
+  or prepare is running is kept until that work ends.
 - While OBS is recording (`recordingActive`), cuts and part uploads pause and resume when it
   stops; the cut stays `cutting`/`uploading` meanwhile. Deleting a cut still works.
 - Staging files (`<WORK_DIR>\cuts`, multi-GB) of a cut that was never dropped (drop failed, a

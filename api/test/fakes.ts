@@ -129,6 +129,7 @@ export function fakeDeps(opts: {
     },
     recordings: {
       list: vi.fn(async () => (opts.recordings === undefined ? [] : opts.recordings)),
+      rescan: vi.fn(async () => (opts.recordings === undefined ? [] : opts.recordings)),
       peaks: vi.fn(async (_ref: string) => [0.1] as number[] | null),
       preview: vi.fn(async (_ref: string, _range: string | undefined, _signal?: AbortSignal) => null as Response | null),
     },

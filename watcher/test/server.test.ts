@@ -136,6 +136,20 @@ describe('recordings', () => {
     expect((await fetch(`${base}/v1/recordings/${s.ref}/preview`, { headers: auth })).status).toBe(404);
   });
 
+  it('rescan forgets a recording whose file was deleted by hand and returns the fresh list', async () => {
+    fs.rmSync(path.join(root!, '2026-10-01_20-00-00.mkv'));
+    const before = await (await fetch(`${base}/v1/recordings`, { headers: auth })).json();
+    expect(before).toHaveLength(1); // nothing rescans until asked
+    const res = await fetch(`${base}/v1/rescan`, { method: 'POST', headers: auth });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+    expect(await (await fetch(`${base}/v1/recordings`, { headers: auth })).json()).toEqual([]);
+  });
+
+  it('rescan needs the token like every other route', async () => {
+    expect((await fetch(`${base}/v1/rescan`, { method: 'POST' })).status).toBe(401);
+  });
+
   it('reports health with whether OBS is recording', async () => {
     expect(await (await fetch(`${base}/v1/health`, { headers: auth })).json()).toMatchObject({ ok: true, ready: 1, recordingActive: false });
   });

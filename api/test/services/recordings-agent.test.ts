@@ -4,12 +4,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createRecordingsAgent } from '../../src/services/recordings-agent';
 
 let server: http.Server;
-let seen: { url?: string; auth?: string; range?: string };
+let seen: { url?: string; method?: string; auth?: string; range?: string };
 
 async function serve(handler: (req: http.IncomingMessage, res: http.ServerResponse) => void): Promise<string> {
   seen = {};
   server = http.createServer((req, res) => {
-    seen = { url: req.url, auth: req.headers.authorization, range: req.headers.range as string | undefined };
+    seen = { url: req.url, method: req.method, auth: req.headers.authorization, range: req.headers.range as string | undefined };
     handler(req, res);
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
@@ -29,6 +29,18 @@ describe('recordings agent adapter', () => {
     const agent = createRecordingsAgent({ baseUrl, token: 't'.repeat(20) });
     expect(await agent.list()).toEqual([{ ref: 'r1' }]);
     expect(seen).toMatchObject({ url: '/v1/recordings', auth: `Bearer ${'t'.repeat(20)}` });
+  });
+
+  it('rescans with a POST and returns the fresh list', async () => {
+    const baseUrl = await serve((_req, res) => res.setHeader('content-type', 'application/json').end(JSON.stringify([{ ref: 'r2' }])));
+    const agent = createRecordingsAgent({ baseUrl, token: 't'.repeat(20) });
+    expect(await agent.rescan()).toEqual([{ ref: 'r2' }]);
+    expect(seen).toMatchObject({ url: '/v1/rescan', method: 'POST', auth: `Bearer ${'t'.repeat(20)}` });
+  });
+
+  it('a rescan of an unconfigured or unreachable agent is null, like the list', async () => {
+    expect(await createRecordingsAgent({}).rescan()).toBeNull();
+    expect(await createRecordingsAgent({ baseUrl: 'http://127.0.0.1:1', token: 't'.repeat(20) }).rescan()).toBeNull();
   });
 
   it('treats an unconfigured agent as unreachable, not as an error', async () => {

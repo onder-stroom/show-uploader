@@ -8,9 +8,17 @@ import { signPreview } from '../services/preview-signature';
 import { UseCaseError } from './errors';
 import { openUploadSession } from './uploads';
 
-export async function listRecordings({ recordings }: Pick<ApiDeps, 'recordings'>) {
-  const list = await recordings.list();
+function reachability(list: AgentRecording[] | null) {
   return list ? ({ reachable: true, recordings: list } as { reachable: true; recordings: AgentRecording[] }) : ({ reachable: false } as UnreachableAgent);
+}
+
+export async function listRecordings({ recordings }: Pick<ApiDeps, 'recordings'>) {
+  return reachability(await recordings.list());
+}
+
+/** Same answer as the list, after the PC has looked at its folder again. */
+export async function rescanRecordings({ recordings }: Pick<ApiDeps, 'recordings'>) {
+  return reachability(await recordings.rescan());
 }
 
 /**

@@ -78,17 +78,45 @@ describe('deleting files by hand', () => {
     expect(lib.list()).toEqual([]);
   });
 
-  it('keeps a recording whose MKV was deleted but whose MP4 master survives, and cuts from the MP4', () => {
+  it('forgets a recording whose MKV was deleted, together with its MP4 master', () => {
     const p = touch('night.mkv', 60_000);
     lib.sync(NOW);
     const [s] = lib.list();
-    fs.mkdirSync(lib.paths(s.ref).dir, { recursive: true });
     fs.writeFileSync(lib.paths(s.ref).master, 'mp4');
     lib.save({ ...s, hasMaster: true, state: 'ready' });
     fs.rmSync(p);
     lib.sync(NOW + 10_000);
+    expect(lib.list()).toEqual([]);
+    expect(fs.existsSync(lib.paths(s.ref).dir)).toBe(false);
+  });
+
+  it('leaves a pinned recording alone until its work is done, then forgets it', () => {
+    const p = touch('night.mkv', 60_000);
+    lib.sync(NOW);
+    const [s] = lib.list();
+    const release = lib.pin(s.ref);
+    fs.rmSync(p);
+    lib.sync(NOW + 10_000);
     expect(lib.list()).toHaveLength(1);
-    expect(lib.sourceFor(s.ref)).toBe(lib.paths(s.ref).master);
+    release();
+    lib.sync(NOW + 20_000);
+    expect(lib.list()).toEqual([]);
+  });
+
+  it('keeps a recording pinned until every holder has released it', () => {
+    const p = touch('night.mkv', 60_000);
+    lib.sync(NOW);
+    const [s] = lib.list();
+    const a = lib.pin(s.ref);
+    const b = lib.pin(s.ref);
+    fs.rmSync(p);
+    a();
+    a(); // releasing twice must not release the other holder's pin
+    lib.sync(NOW + 10_000);
+    expect(lib.list()).toHaveLength(1);
+    b();
+    lib.sync(NOW + 20_000);
+    expect(lib.list()).toEqual([]);
   });
 
   it('sourceFor is null once nothing is left, so a cut fails as source_gone', () => {

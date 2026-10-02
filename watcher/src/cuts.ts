@@ -32,7 +32,7 @@ export class CutError extends Error {
 }
 
 export type CutDeps = {
-  library: Pick<Library, 'get' | 'sourceFor' | 'recordUpload'>;
+  library: Pick<Library, 'get' | 'sourceFor' | 'recordUpload' | 'pin'>;
   cutFile(o: {
     input: string; output: string; startS: number; endS: number; audioStream: number; videoCodec: string | null;
   }): Promise<void>;
@@ -201,6 +201,16 @@ export class CutManager {
   }
 
   private async runCut(rec: Record_): Promise<void> {
+    // The cut reads the recording's master or original; a rescan must not delete it meanwhile.
+    const unpin = this.d.library.pin(rec.ref);
+    try {
+      await this.cutOnce(rec);
+    } finally {
+      unpin();
+    }
+  }
+
+  private async cutOnce(rec: Record_): Promise<void> {
     const out = this.stagedPath(rec);
     try {
       const source = this.d.library.sourceFor(rec.ref);

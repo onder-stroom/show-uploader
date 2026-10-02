@@ -416,6 +416,23 @@ export function useRecordings() {
   return useQuery(trpc.recordings.list.queryOptions(undefined, { refetchInterval: 15_000 }));
 }
 
+// Asks the PC to look at its folder now; a fresh answer replaces the polled list at once.
+// "Unreachable" is not taken at its word: an older service answers the new route with a 404,
+// so the list is asked again instead of flashing "not reachable".
+export function useRescanRecordings() {
+  const trpc = useTRPC();
+  const qc = useQueryClient();
+  const listKey = trpc.recordings.list.queryKey();
+  return useMutation(
+    trpc.recordings.rescan.mutationOptions({
+      onSuccess: (data) => {
+        if (data.reachable) qc.setQueryData(listKey, data);
+        else void qc.invalidateQueries({ queryKey: listKey });
+      },
+    })
+  );
+}
+
 export function useRecordingPeaks(ref: string | null) {
   const trpc = useTRPC();
   return useQuery(trpc.recordings.peaks.queryOptions({ ref: ref ?? '' }, { enabled: !!ref, staleTime: Infinity }));
