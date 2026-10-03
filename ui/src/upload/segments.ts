@@ -63,6 +63,32 @@ export function newSegmentAt(playhead: number, durationS: number, others: Segmen
   return endS - startS >= MIN_SEGMENT_SECONDS ? { startS, endS } : null;
 }
 
+/**
+ * Where a new segment can start when the operator asks for one at `from`: there if it is free,
+ * else at the end of whichever segment holds it (and on, if that end is inside another). Adding
+ * from inside a segment is the common case, so it must not be a dead end.
+ */
+export function firstFreeStart(from: number, others: Segment[]): number {
+  let t = Math.max(0, from);
+  for (let i = 0; i <= others.length; i++) {
+    const hit = others.find((o) => o.startS <= t + EDGE_EPS && t < o.endS - EDGE_EPS);
+    if (!hit) return t;
+    t = hit.endS;
+  }
+  return t;
+}
+
+/**
+ * Where "add segment" starts: right where the previous segment ends, so consecutive artists line up
+ * with no gap and no playhead juggling. The previous segment is the one that ends last among those
+ * that start at or before the playhead; with none, the playhead itself.
+ */
+export function startAfterPrevious(playhead: number, segments: Segment[]): number {
+  const before = segments.filter((s) => s.startS <= playhead + EDGE_EPS);
+  const anchor = before.length ? Math.max(...before.map((s) => s.endS)) : Math.max(0, playhead);
+  return firstFreeStart(anchor, segments);
+}
+
 /** The selection after removing a segment: kept if another row went, else the neighbour (next, then previous), else none. */
 export function selectAfterRemove(segments: Draft[], removedId: string, selectedId: string | null): string | null {
   if (removedId !== selectedId) return selectedId;
