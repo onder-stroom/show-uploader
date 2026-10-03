@@ -24,7 +24,15 @@ export async function agentStatus({ recordings }: Pick<ApiDeps, 'recordings'>) {
   const h = await recordings.health();
   if (!h) return { reachable: false } as UnreachableAgent;
   const protocol = typeof h.protocol === 'number' ? h.protocol : 1;
-  return { reachable: true as const, protocol, build: typeof h.build === 'string' ? h.build : null, expected: AGENT_PROTOCOL, current: protocol >= AGENT_PROTOCOL };
+  return {
+    reachable: true as const,
+    protocol,
+    build: typeof h.build === 'string' ? h.build : null,
+    expected: AGENT_PROTOCOL,
+    current: protocol >= AGENT_PROTOCOL,
+    // While OBS records, the PC holds back cuts and uploads so the stream is never slowed.
+    recordingActive: h.recordingActive === true,
+  };
 }
 
 export type DraftProblem = 'unreachable' | 'outdated';
@@ -131,8 +139,22 @@ export function deriveCutStatus(job: CutJobView): CutStatus {
   }
 }
 
-export async function cutStatuses(cutIds: string[], { cuts }: Pick<ApiDeps, 'cuts'>) {
-  return Promise.all(cutIds.map(async (cutId) => ({ cutId, ...deriveCutStatus(await cuts.job(cutId)) })));
+/**
+ * Every cut the queue knows, with where it is. This is the one answer to "what is happening": it comes
+ * from the server, not from a page's memory, so a reload, another tab or another machine sees the same.
+ */
+export async function listCuts({ cuts }: Pick<ApiDeps, 'cuts'>) {
+  const all = await cuts.list();
+  return all.map(({ payload, createdAtMs, job }) => ({
+    cutId: payload.cutId,
+    ref: payload.ref,
+    showId: payload.showId,
+    startS: payload.startS,
+    endS: payload.endS,
+    filename: payload.filename,
+    createdAtMs,
+    ...deriveCutStatus(job),
+  }));
 }
 
 export async function recordingPeaks(ref: string, { recordings }: Pick<ApiDeps, 'recordings'>): Promise<number[]> {

@@ -10,7 +10,7 @@ import Typography from '@mui/material/Typography';
 import { suggestSegments, validateSegments } from '@domain/recording-segments';
 import { cutFilename, type AgentRecording } from '@domain/recordings-contract';
 import {
-  useAgentStatus, useCutStatuses, usePreviewPath, useRecordingDraft, useRecordingPeaks, useRecordings, useRescanRecordings,
+  useAgentStatus, useCuts, usePreviewPath, useRecordingDraft, useRecordingPeaks, useRecordings, useRescanRecordings,
   useSaveRecordingDraft, useShows, useStaged, useStartCuts, useUploadingProgress,
 } from '../api/hooks';
 import { humanDuration } from '../format';
@@ -19,6 +19,7 @@ import { PageLoading } from '../components/Skeleton';
 import { HotkeysProvider } from 'react-hotkeys-hook';
 import Tooltip from '@mui/material/Tooltip';
 import AddShowDialog from '../components/AddShowDialog';
+import CutsPanel from '../components/CutsPanel';
 import SegmentControls from '../components/SegmentControls';
 import ShortcutSheet from '../components/ShortcutSheet';
 import ShowPicker from '../components/ShowPicker';
@@ -26,6 +27,7 @@ import { TrimBar, ZOOM_LEVELS } from '../components/TrimBar';
 import { toWaveform } from '../components/WaveformPath';
 import { resolveSegment, type CutStatusView, type SegmentStatus } from '../upload/resolveSegment';
 import { moveEnd, moveStart } from '../upload/clipRange';
+import { runningCuts } from '../upload/cutLabel';
 import { shuttleLabel } from '../upload/shuttle';
 import { slotFromRecording, toShowOption, type ShowOption } from '../upload/showPicker';
 import { useEditorHotkeys } from '../upload/useEditorHotkeys';
@@ -45,6 +47,7 @@ export default function Recordings() {
   const q = useRecordings();
   const rescan = useRescanRecordings();
   const agenda = useShows();
+  const cuts = useCuts();
   // The opened recording itself, not a ref looked up in the latest list: one poll that
   // fails or lacks it must not unmount the editor and lose the operator's drafts.
   const [opened, setOpened] = useState<AgentRecording | null>(null);
@@ -119,6 +122,7 @@ export default function Recordings() {
                   {r.state === 'preparing' && ' · preparing the editor view…'}
                   {r.state === 'failed' && ' · could not be prepared'}
                   {r.hasDraft && ' · segments saved'}
+                  {runningCuts(cuts.data, r.ref) > 0 && ` · ${runningCuts(cuts.data, r.ref)} cut${runningCuts(cuts.data, r.ref) === 1 ? '' : 's'} running`}
                 </Typography>
                 {/* Loading, failed or odd agenda data just means no hint: the list never waits for it. */}
                 <AgendaHint titles={showsDuringRecording(r.recordedAtMs, r.durationS ?? 0, agenda.data).map((x) => x.title).filter(Boolean)} />
@@ -185,8 +189,10 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const draftApplied = useRef(false);
   const [playhead, setPlayhead] = useState(0);
-  const [cutByShow, setCutByShow] = useState<Record<string, string>>({});
-  const statuses = useCutStatuses(Object.values(cutByShow));
+  // What is happening with the cuts comes from the server, never from this page's memory.
+  const cuts = useCuts();
+  const agent = useAgentStatus().data;
+  const recordingCuts = (cuts.data ?? []).filter((x) => x.ref === recording.ref);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // The segment a new show is being added for, and what the operator had typed.
   const [adding, setAdding] = useState<{ segId: string; title: string } | null>(null);
@@ -203,10 +209,8 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
     return typeof pct === 'number' ? pct / 100 : null;
   };
 
-  const cutFor = (s: Draft) => {
-    const cutId = s.showId ? cutByShow[s.showId] : undefined;
-    return statuses.data?.find((x) => x.cutId === cutId);
-  };
+  // The newest cut of this recording for the segment's show (the list is newest first).
+  const cutFor = (s: Draft) => (s.showId ? recordingCuts.find((x) => x.showId === s.showId) : undefined);
   const anyActive = segments.some((s) => isActive(cutFor(s)));
   const problems = validateSegments(segments, durationS);
   const canCut = segments.length > 0 && segments.every((s) => s.showId) && problems.length === 0 && !startCuts.isPending && !anyActive;
@@ -323,10 +327,8 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
   });
 
   const submit = () =>
-    startCuts.mutate(
-      { ref: recording.ref, segments: segments.map(({ startS, endS, showId }) => ({ startS, endS, showId: showId! })) },
-      { onSuccess: (r) => setCutByShow(Object.fromEntries(r.cuts.map((x) => [x.showId, x.cutId]))) }
-    );
+    startCuts.mutate({ ref: recording.ref, segments: segments.map(({ startS, endS, showId }) => ({ startS, endS, showId: showId! })) });
+  const showTitle = (showId: string) => shows.data?.find((x) => x.id === showId)?.title ?? 'a show that is no longer in the list';
 
   return (
     <Stack spacing={2.5}>
@@ -376,6 +378,14 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
             : 'saved segments could not be loaded: the OBS PC did not answer.'}
         </Typography>
       )}
+
+      <CutsPanel
+        cuts={recordingCuts} titleOf={showTitle} paused={agent?.reachable === true && agent.recordingActive}
+        fractionOf={(showId) => {
+          const pct = uploading.data?.find((u) => u.show_id === showId)?.pct;
+          return typeof pct === 'number' ? pct / 100 : null;
+        }}
+      />
 
       <Stack spacing={1} sx={{ minWidth: 0 }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>

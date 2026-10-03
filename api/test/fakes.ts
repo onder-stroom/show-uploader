@@ -20,6 +20,7 @@ export function fakeDeps(opts: {
   recordings?: AgentRecording[] | null;
   strands?: { id: string; name: string; isDefault: boolean }[];
   health?: AgentHealth | null;
+  cutJobs?: { payload: import('@show-uploader/domain').CutJobPayload; createdAtMs: number; job: NonNullable<import('../src/ports').CutJobView> }[];
   draft?: DraftResult;
   saveDraft?: DraftResult;
   recordingsSecret?: string | null;
@@ -150,6 +151,7 @@ export function fakeDeps(opts: {
     cuts: {
       enqueue: vi.fn(async (payload: unknown) => void queued.push({ kind: 'cut', payload })),
       job: vi.fn(async (_cutId: string) => null as import('../src/ports').CutJobView),
+      list: vi.fn(async () => (opts.cutJobs ?? []) as { payload: import('@show-uploader/domain').CutJobPayload; createdAtMs: number; job: NonNullable<import('../src/ports').CutJobView> }[]),
     },
     presence: { broadcastClaims: vi.fn() },
     config: { jingleS3Key: opts.jingleS3Key ?? null, recordingsSecret: opts.recordingsSecret === undefined ? 's'.repeat(24) : opts.recordingsSecret },

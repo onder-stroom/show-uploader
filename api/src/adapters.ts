@@ -2,7 +2,8 @@
  * The real implementations of ports.ts, wired to this deployment. Built once in
  * deps.ts; nothing else constructs infrastructure for the use cases.
  */
-import type { CutStep } from '@show-uploader/domain';
+import type { Job } from 'bullmq';
+import type { CutJobPayload, CutStep } from '@show-uploader/domain';
 import { db } from './db/client';
 import {
   createMultipartSession,
@@ -34,6 +35,16 @@ import { findShowFolder } from './services/show-folder';
 import { createArchiveDraft, getArchiveShow, listShows, listStrands, resolveGenreIds, updateArchiveRecord } from './services/shows-api';
 import type { PreviewJobView } from './services/video-preview';
 import type { ApiDeps, CutJobView } from './ports';
+
+// The queue's view of one cut job, in the terms the api speaks.
+async function cutJobView(job: Job<CutJobPayload>): Promise<NonNullable<CutJobView>> {
+  const progress = job.progress as { step?: CutStep } | number;
+  return {
+    status: (await job.getState()) as NonNullable<CutJobView>['status'],
+    step: typeof progress === 'object' && progress ? (progress.step ?? null) : null,
+    failedReason: job.failedReason ?? null,
+  };
+}
 
 export function createDeps(): ApiDeps {
   return {
@@ -127,13 +138,14 @@ export function createDeps(): ApiDeps {
       },
       async job(cutId) {
         const job = await recordingCutQueue.getJob(cutId);
-        if (!job) return null;
-        const progress = job.progress as { step?: CutStep } | number;
-        return {
-          status: (await job.getState()) as NonNullable<CutJobView>['status'],
-          step: typeof progress === 'object' && progress ? (progress.step ?? null) : null,
-          failedReason: job.failedReason ?? null,
-        };
+        return job ? cutJobView(job) : null;
+      },
+      async list() {
+        const jobs = await recordingCutQueue.getJobs(['active', 'waiting', 'delayed', 'paused', 'failed', 'completed'], 0, 100);
+        const views = await Promise.all(
+          jobs.filter(Boolean).map(async (job) => ({ payload: job.data, createdAtMs: job.timestamp, job: await cutJobView(job) }))
+        );
+        return views.sort((a, b) => b.createdAtMs - a.createdAtMs);
       },
     },
     config: { jingleS3Key: env.JINGLE_S3_KEY ?? null, recordingsSecret: env.RECORDINGS_AGENT_TOKEN ?? null },

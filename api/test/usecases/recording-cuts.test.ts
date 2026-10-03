@@ -3,7 +3,7 @@ import type { AgentRecording } from '@show-uploader/domain';
 import { verifyPreview } from '../../src/services/preview-signature';
 import { UseCaseError } from '../../src/usecases/errors';
 import {
-  agentStatus, cutIdFor, cutStatuses, deriveCutStatus, listRecordings, loadDraft, openCutSession, recordingPeaks, rescanRecordings, saveDraft, signPreviewPath, startCuts,
+  agentStatus, cutIdFor, deriveCutStatus, listCuts, listRecordings, loadDraft, openCutSession, recordingPeaks, rescanRecordings, saveDraft, signPreviewPath, startCuts,
 } from '../../src/usecases/recording-cuts';
 import type { DraftResult } from '../../src/services/recordings-agent';
 import { fakeDeps } from '../fakes';
@@ -122,13 +122,29 @@ describe('deriveCutStatus', () => {
     });
   });
 
-  it('cutStatuses answers per id', async () => {
-    const deps = fakeDeps();
-    deps.cuts.job.mockResolvedValueOnce(job('completed')).mockResolvedValueOnce(null);
-    expect(await cutStatuses(['a', 'b'], deps)).toEqual([
-      { cutId: 'a', state: 'done', error: null },
-      { cutId: 'b', state: 'unknown', error: null },
+  const payload = (cutId: string, showId: string, startS = 0, endS = 600) => ({ cutId, ref: 'r1', filename: `${cutId}.mp4`, showId, startS, endS });
+
+  it('listCuts reports every cut the queue knows, with where each one is, newest first', async () => {
+    const deps = fakeDeps({
+      cutJobs: [
+        { payload: payload('c2', 'show-b', 600, 1200), createdAtMs: 2000, job: { status: 'waiting', step: null, failedReason: null } },
+        { payload: payload('c1', 'show-a'), createdAtMs: 1000, job: { status: 'active', step: 'uploading', failedReason: null } },
+        { payload: payload('c0', 'show-z'), createdAtMs: 500, job: { status: 'failed', step: null, failedReason: 'PC unreachable' } },
+        { payload: payload('cx', 'show-y'), createdAtMs: 100, job: { status: 'completed', step: null, failedReason: null } },
+      ],
+    });
+    const list = await listCuts(deps);
+    expect(list.map((c) => [c.cutId, c.state, c.error])).toEqual([
+      ['c2', 'queued', null],
+      ['c1', 'uploading', null],
+      ['c0', 'failed', 'PC unreachable'],
+      ['cx', 'done', null],
     ]);
+    expect(list[0]).toMatchObject({ ref: 'r1', showId: 'show-b', startS: 600, endS: 1200, filename: 'c2.mp4', createdAtMs: 2000 });
+  });
+
+  it('listCuts is an empty list when nothing was ever cut', async () => {
+    expect(await listCuts(fakeDeps())).toEqual([]);
   });
 });
 
@@ -194,12 +210,17 @@ describe('openCutSession', () => {
 
 describe('agentStatus', () => {
   it('reports the build and whether the protocol is new enough', async () => {
-    expect(await agentStatus(fakeDeps())).toEqual({ reachable: true, protocol: 2, build: 'abc1234', expected: 2, current: true });
+    expect(await agentStatus(fakeDeps())).toEqual({ reachable: true, protocol: 2, build: 'abc1234', expected: 2, current: true, recordingActive: false });
   });
 
   it('counts a service that reports no protocol as the oldest, so it reads as outdated', async () => {
     const deps = fakeDeps({ health: { ok: true, ready: 0, preparing: 0, failed: 0, recordingActive: false } });
-    expect(await agentStatus(deps)).toEqual({ reachable: true, protocol: 1, build: null, expected: 2, current: false });
+    expect(await agentStatus(deps)).toEqual({ reachable: true, protocol: 1, build: null, expected: 2, current: false, recordingActive: false });
+  });
+
+  it('says when OBS is recording on the PC, because that is when it holds cuts back', async () => {
+    const deps = fakeDeps({ health: { ok: true, protocol: 2, build: 'x', ready: 1, preparing: 0, failed: 0, recordingActive: true } });
+    expect(await agentStatus(deps)).toMatchObject({ recordingActive: true });
   });
 
   it('is unreachable when the PC does not answer', async () => {

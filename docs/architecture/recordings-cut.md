@@ -23,6 +23,13 @@ code must keep. Design rationale: `docs/superpowers/specs/2026-10-01-recordings-
 > starts depending on something an older PC service lacks; `/v1/health` reports the service's own, the
 > Recordings page warns when it is lower, and a service that reports none counts as 1.
 
+> **Seeing what the cuts are doing** comes from the server, never from a page's memory: `recordings.cuts`
+> lists the jobs in the `recording-cuts` queue (running, waiting, recently finished or failed), and the
+> Recordings page derives every row, the "cuts of this recording" panel and the "N cuts running" mark from
+> it, so a reload, another tab or another machine shows the same. Cuts run one at a time, and the PC holds
+> cuts and uploads back while OBS records (the panel says so, from `/v1/health` `recordingActive`). A
+> finished cut is the show's staged video, ready to publish on the upload page.
+
 ## The flow
 
 1. **PC** (`watcher/`, a Windows service, not in Docker): watches the OBS recordings

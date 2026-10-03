@@ -156,6 +156,8 @@ export interface CutQueue {
   enqueue(payload: CutJobPayload): Promise<void>;
   /** The cut's job state, or null when there is none. */
   job(cutId: string): Promise<CutJobView>;
+  /** Every cut the queue still knows (running, waiting, and the recently finished or failed), newest first. */
+  list(): Promise<{ payload: CutJobPayload; createdAtMs: number; job: NonNullable<CutJobView> }[]>;
 }
 
 export type ApiConfig = {
