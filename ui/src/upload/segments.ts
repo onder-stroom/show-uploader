@@ -46,6 +46,7 @@ export function agendaSlot(show: { id: string; date: string; startTime: string; 
 }
 
 const NEW_SEGMENT_SECONDS = 30 * 60;
+const EDGE_EPS = 1e-6;
 
 /**
  * A new segment from the playhead: 30 minutes, cut short by the next segment or the end of
@@ -53,7 +54,9 @@ const NEW_SEGMENT_SECONDS = 30 * 60;
  */
 export function newSegmentAt(playhead: number, durationS: number, others: Segment[]): Segment | null {
   const startS = round1(Math.max(0, playhead));
-  if (others.some((o) => o.startS <= startS && startS < o.endS)) return null;
+  // A tolerance, not strict comparison: a segment end carries float noise (3820.7000000000003 after a
+  // drag), and a playhead sitting exactly on it must count as outside.
+  if (others.some((o) => o.startS <= startS + EDGE_EPS && startS < o.endS - EDGE_EPS)) return null;
   const limit = Math.min(durationS, ...others.filter((o) => o.startS >= startS).map((o) => o.startS));
   const endS = round1(Math.min(startS + NEW_SEGMENT_SECONDS, limit));
   return endS - startS >= MIN_SEGMENT_SECONDS ? { startS, endS } : null;

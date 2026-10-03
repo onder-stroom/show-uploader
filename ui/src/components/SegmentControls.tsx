@@ -15,6 +15,8 @@ type Props = {
   segment: Draft | null;
   /** The segment cannot be edited: a cut is running, or it is frozen. */
   locked: boolean;
+  /** IN does something: it edits the selected segment, or starts the next one at the playhead. */
+  canMarkIn: boolean;
   onMarkIn(): void;
   onMarkOut(): void;
   onGoToIn(): void;
@@ -33,14 +35,14 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
 }
 
 /** The Clipper's mark and fine controls for the selected segment. */
-export default function SegmentControls({ segment, locked, ...on }: Props) {
+export default function SegmentControls({ segment, locked, canMarkIn, ...on }: Props) {
   const off = !segment;
   const edit = off || locked;
   return (
     <Stack direction="row" spacing={1.5} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'flex-start' }}>
       <Group label="mark:">
-        <Tooltip title="set the in point at the playhead. shortcut: I"><span>
-          <Button size="small" variant="outlined" disabled={edit} onClick={on.onMarkIn}>IN (I)</Button>
+        <Tooltip title={edit ? 'start the next segment at the playhead. shortcut: I' : 'set the in point at the playhead. shortcut: I'}><span>
+          <Button size="small" variant="outlined" disabled={!canMarkIn} onClick={on.onMarkIn}>IN (I)</Button>
         </span></Tooltip>
         <Tooltip title="set the out point at the playhead. shortcut: O"><span>
           <Button size="small" variant="outlined" disabled={edit} onClick={on.onMarkOut}>OUT (O)</Button>
@@ -54,6 +56,11 @@ export default function SegmentControls({ segment, locked, ...on }: Props) {
         <Box component="span" sx={{ fontFamily: 'inherit', fontSize: '0.8125rem', color: c.muted }}>
           {segment ? `${formatTimecode(segment.startS)} → ${formatTimecode(segment.endS)}` : ''}
         </Box>
+        {segment && locked && (
+          <Typography variant="caption" color="text.secondary">
+            {segment.frozen ? `frozen: unfreeze it to edit${canMarkIn ? ', or press IN to start the next segment' : ''}` : 'a cut is running'}
+          </Typography>
+        )}
       </Group>
 
       <Group label="fine:">

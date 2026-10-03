@@ -195,8 +195,8 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
     setSelectedId(next[0]?.id ?? null);
   };
 
-  const add = () => {
-    const seg = newSegmentAt(playhead, durationS, segments);
+  const add = (at = playhead) => {
+    const seg = newSegmentAt(at, durationS, segments);
     if (!seg) return;
     const draft = { ...seg, id: newId(), showId: null };
     commit((all) => [...all, draft].sort((a, b) => a.startS - b.startS));
@@ -226,9 +226,17 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
   };
   const now = () => video.current?.currentTime ?? playhead;
 
+  // IN edits the selected segment, or, when nothing editable is selected (none yet, or it is frozen or
+  // being cut), starts the next segment at the playhead: that is how a second segment gets prepared.
+  const markIn = () => {
+    if (editable) setStart(now());
+    else if (!anyActive) add(now());
+  };
+  const canMarkIn = editable || (!anyActive && newSegmentAt(playhead, durationS, segments) !== null);
+
   useEditorHotkeys({
     shuttle: shuttle.press,
-    markIn: () => setStart(now()),
+    markIn,
     markOut: () => setEnd(now()),
     goToIn: () => selected && seek(selected.startS),
     goToOut: () => selected && seek(selected.endS),
@@ -305,7 +313,7 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
 
       <SegmentControls
         segment={selected} locked={!editable}
-        onMarkIn={() => setStart(now())} onMarkOut={() => setEnd(now())}
+        canMarkIn={canMarkIn} onMarkIn={markIn} onMarkOut={() => setEnd(now())}
         onGoToIn={() => selected && seek(selected.startS)} onGoToOut={() => selected && seek(selected.endS)}
         onNudgeStart={(d) => selected && setStart(selected.startS + d)} onNudgeEnd={(d) => selected && setEnd(selected.endS + d)}
       />
@@ -314,7 +322,7 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
         <Tooltip title={segments.some((x) => x.frozen) ? 'unfreeze your segments first: suggesting would replace them' : 'fill in a first guess from the agenda'}><span>
           <Button size="small" variant="outlined" onClick={suggest} disabled={!shows.data || anyActive || segments.some((x) => x.frozen)}>suggest from agenda</Button>
         </span></Tooltip>
-        <Button size="small" variant="outlined" onClick={add} disabled={anyActive || newSegmentAt(playhead, durationS, segments) === null}>add segment</Button>
+        <Button size="small" variant="outlined" onClick={() => add()} disabled={anyActive || newSegmentAt(playhead, durationS, segments) === null}>add segment</Button>
       </Stack>
 
       <Stack spacing={1}>

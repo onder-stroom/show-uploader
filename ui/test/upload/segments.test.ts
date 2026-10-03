@@ -82,3 +82,16 @@ describe('editorNote', () => {
     expect(editorNote(list, 'gone')).toMatch(/no longer listed/);
   });
 });
+
+describe('newSegmentAt at the edge of another segment', () => {
+  it('lets a playhead sitting on a segment end start the next one, float noise or not', () => {
+    const end = 3820.7000000000003; // what a drag leaves behind
+    expect(newSegmentAt(3820.7, 15480, [{ startS: 217.6, endS: end }])).toEqual({ startS: 3820.7, endS: 5620.7 });
+    expect(newSegmentAt(3820.7, 15480, [{ startS: 217.6, endS: 3820.7 }])).toEqual({ startS: 3820.7, endS: 5620.7 });
+  });
+
+  it('still refuses to start inside a segment, or a hair before its end', () => {
+    expect(newSegmentAt(3820.6, 15480, [{ startS: 217.6, endS: 3820.7 }])).toBeNull();
+    expect(newSegmentAt(300, 15480, [{ startS: 217.6, endS: 3820.7 }])).toBeNull();
+  });
+});
