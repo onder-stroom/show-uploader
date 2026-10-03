@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cutLabel, isRunning, runningCuts, type CutItem } from '../../src/upload/cutLabel';
+import { cutLabel, doneLabel, isRunning, runningCuts, type CutItem } from '../../src/upload/cutLabel';
 
 const cut = (over: Partial<CutItem> = {}): CutItem => ({
   cutId: 'c', ref: 'r1', showId: 's', startS: 0, endS: 60, filename: 'f.mp4', createdAtMs: 1, state: 'queued', error: null, ...over,
@@ -12,7 +12,7 @@ describe('cutLabel', () => {
     expect(cutLabel(cut({ state: 'uploading' }), null)).toBe('uploading…');
     expect(cutLabel(cut({ state: 'uploading' }), 0.426)).toBe('uploading 43%');
     expect(cutLabel(cut({ state: 'finishing' }), null)).toBe('finishing…');
-    expect(cutLabel(cut({ state: 'done' }), null)).toMatch(/ready to publish/);
+    expect(cutLabel(cut({ state: 'done' }), null)).toBe('done');
   });
 
   it('carries the reason a cut failed, with a fallback', () => {
@@ -36,5 +36,17 @@ describe('runningCuts', () => {
     expect(isRunning(cut({ state: 'done' }))).toBe(false);
     expect(isRunning(cut({ state: 'failed' }))).toBe(false);
     expect(isRunning(cut({ state: 'finishing' }))).toBe(true);
+  });
+});
+
+describe('doneLabel', () => {
+  it('is ready only when the show\'s staged video is the one this cut made', () => {
+    expect(doneLabel('a.mp4', 'a.mp4')).toMatch(/ready to publish/);
+  });
+
+  it('says what is there instead when it is not', () => {
+    expect(doneLabel('a.mp4', 'b.mp4')).toBe('done, but the show has a different video staged (b.mp4)');
+    expect(doneLabel('a.mp4', null)).toBe('done, but its video is not on the show yet');
+    expect(doneLabel('a.mp4', undefined)).toBe('done, but its video is not on the show yet');
   });
 });
