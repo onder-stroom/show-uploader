@@ -24,6 +24,7 @@ import NewUpload from './pages/NewUpload';
 import Shows from './pages/Shows';
 import History from './pages/History';
 import Archive from './pages/Archive';
+import AppFooter from './components/AppFooter';
 import { UploadIndicator } from './components/Dropzone';
 import { PresenceRoster } from './components/PresenceRoster';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -98,7 +99,7 @@ function AuthedLayout() {
   const isActive = (to: string) => (to === '/' ? pathname === '/' : pathname.startsWith(to));
 
   return (
-    <Box sx={{ minHeight: '100vh' }}>
+    <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <Box
         component="header"
         sx={{
@@ -223,13 +224,14 @@ function AuthedLayout() {
           </Stack>
         </Stack>
       </Box>
-      <Box component="main" sx={{ mx: 'auto', maxWidth: 1152, px: { xs: 2, sm: 3 }, py: { xs: 4, sm: 5 } }}>
+      <Box component="main" sx={{ mx: 'auto', width: '100%', maxWidth: 1152, flex: 1, px: { xs: 2, sm: 3 }, py: { xs: 4, sm: 5 } }}>
         {/* Page-level boundary: a crash in one page keeps the header/nav + is
             recoverable, instead of blanking the whole app. */}
         <ErrorBoundary>
           <Outlet />
         </ErrorBoundary>
       </Box>
+      <AppFooter />
     </Box>
   );
 }
