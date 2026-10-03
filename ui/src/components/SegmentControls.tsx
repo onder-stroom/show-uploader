@@ -6,14 +6,9 @@ import Typography from '@mui/material/Typography';
 import { c } from '../theme';
 import { formatTimecode, type Draft } from '../upload/segments';
 
-// Ported from the Coming Soon Clipper (components/TrimControls.tsx): the same groups, in the same
-// order, with the same presets and nudge size, so people who use both find their way around.
-const LENGTH_PRESETS = [
-  { label: '30s', seconds: 30 },
-  { label: '1m', seconds: 60 },
-  { label: '1m30', seconds: 90 },
-  { label: '2m', seconds: 120 },
-];
+// Ported from the Coming Soon Clipper (components/TrimControls.tsx): the mark and fine groups, with
+// the same nudge size, so people who use both find their way around. Not ported: the length presets
+// and the loop, which a night cut into several shows has no use for.
 const NUDGE_S = 0.5;
 
 type Props = {
@@ -24,10 +19,8 @@ type Props = {
   onMarkOut(): void;
   onGoToIn(): void;
   onGoToOut(): void;
-  onSetLength(seconds: number): void;
   onNudgeStart(deltaS: number): void;
   onNudgeEnd(deltaS: number): void;
-  onStartLoop(): void;
 };
 
 function Group({ label, children }: { label: string; children: React.ReactNode }) {
@@ -39,11 +32,10 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-/** The Clipper's mark / length / fine controls for the selected segment. */
+/** The Clipper's mark and fine controls for the selected segment. */
 export default function SegmentControls({ segment, locked, ...on }: Props) {
   const off = !segment;
   const edit = off || locked;
-  const length = segment ? segment.endS - segment.startS : 0;
   return (
     <Stack direction="row" spacing={1.5} useFlexGap sx={{ flexWrap: 'wrap', alignItems: 'flex-start' }}>
       <Group label="mark:">
@@ -64,23 +56,12 @@ export default function SegmentControls({ segment, locked, ...on }: Props) {
         </Box>
       </Group>
 
-      <Group label="length:">
-        {LENGTH_PRESETS.map((p) => (
-          <Button key={p.seconds} size="small" disabled={edit} variant={Math.abs(length - p.seconds) < 0.05 ? 'contained' : 'outlined'} onClick={() => on.onSetLength(p.seconds)}>
-            {p.label}
-          </Button>
-        ))}
-        <Tooltip title="jump to the in point and play the segment on repeat"><span>
-          <Button size="small" disabled={off} onClick={on.onStartLoop}>start loop</Button>
-        </span></Tooltip>
-      </Group>
-
       <Group label="fine:">
         <Button size="small" disabled={edit} onClick={() => on.onNudgeStart(-NUDGE_S)}>− start</Button>
         <Button size="small" disabled={edit} onClick={() => on.onNudgeStart(NUDGE_S)}>+ start</Button>
         <Button size="small" disabled={edit} onClick={() => on.onNudgeEnd(-NUDGE_S)}>− end</Button>
         <Button size="small" disabled={edit} onClick={() => on.onNudgeEnd(NUDGE_S)}>+ end</Button>
-        <Typography variant="caption" color="text.secondary">duration: {segment ? length.toFixed(1) : '–'}s</Typography>
+        <Typography variant="caption" color="text.secondary">duration: {segment ? (segment.endS - segment.startS).toFixed(1) : '–'}s</Typography>
       </Group>
     </Stack>
   );

@@ -155,7 +155,6 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
   const [adding, setAdding] = useState<{ segId: string; title: string } | null>(null);
   const [zoomIndex, setZoomIndex] = useState(0);
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [looping, setLooping] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
   const nextId = useRef(1);
   const newId = () => String(nextId.current++);
@@ -183,9 +182,6 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
   };
 
   const shuttle = useShuttle(video, seek);
-  // Looping ends when playback does, however it stops.
-  useEffect(() => { if (shuttle.rate === 0) setLooping(false); }, [shuttle.rate]);
-
   // A frozen segment takes no edits (only its own unfreeze), whoever asks: a row, the timeline or a key.
   const patch = (id: string, change: Partial<Draft>) =>
     commit((all) => all.map((s) => (s.id === id && (!s.frozen || 'frozen' in change) ? { ...s, ...change } : s)), `edit:${id}`);
@@ -229,12 +225,6 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
     patch(selected!.id, { startS: r.start, endS: r.end });
   };
   const now = () => video.current?.currentTime ?? playhead;
-  const startLoop = () => {
-    if (!selected) return;
-    seek(selected.startS);
-    setLooping(true);
-    void video.current?.play();
-  };
 
   useEditorHotkeys({
     shuttle: shuttle.press,
@@ -265,12 +255,7 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
         <Box
           component="video" ref={video} src={preview.data.path} controls preload="metadata" playsInline
           {...shuttle.videoProps}
-          onTimeUpdate={(e: React.SyntheticEvent<HTMLVideoElement>) => {
-            const t = e.currentTarget.currentTime;
-            setPlayhead(t);
-            // Loop: at the out point, back to the in point.
-            if (looping && selected && t >= selected.endS) seek(selected.startS);
-          }}
+          onTimeUpdate={(e: React.SyntheticEvent<HTMLVideoElement>) => setPlayhead(e.currentTarget.currentTime)}
           sx={{ width: '100%', maxWidth: '100%', maxHeight: '45vh', backgroundColor: '#000', display: 'block' }}
         />
       ) : (
@@ -282,7 +267,7 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
       )}
 
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
-        <Typography variant="caption" sx={{ minWidth: 64, fontWeight: 600 }}>{shuttleLabel(shuttle.rate)}{looping ? ' · loop' : ''}</Typography>
+        <Typography variant="caption" sx={{ minWidth: 64, fontWeight: 600 }}>{shuttleLabel(shuttle.rate)}</Typography>
         <Tooltip title="undo. shortcut: ⌘Z"><span>
           <Button size="small" disabled={!canUndo || anyActive} onClick={undo}>undo</Button>
         </span></Tooltip>
@@ -322,9 +307,7 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
         segment={selected} locked={!editable}
         onMarkIn={() => setStart(now())} onMarkOut={() => setEnd(now())}
         onGoToIn={() => selected && seek(selected.startS)} onGoToOut={() => selected && seek(selected.endS)}
-        onSetLength={(sec) => selected && patch(selected.id, { endS: Math.min(durationS, selected.startS + sec) })}
         onNudgeStart={(d) => selected && setStart(selected.startS + d)} onNudgeEnd={(d) => selected && setEnd(selected.endS + d)}
-        onStartLoop={startLoop}
       />
 
       <Stack direction="row" spacing={1}>
