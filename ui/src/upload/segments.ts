@@ -1,4 +1,4 @@
-import { MIN_SEGMENT_SECONDS, type AgendaSlot, type Segment } from '@domain/recording-segments';
+import { MIN_SEGMENT_SECONDS, suggestSegments, type AgendaSlot, type Segment } from '@domain/recording-segments';
 
 /** The editor's working copy of a segment. The server re-validates everything with the domain rules. */
 export type Draft = Segment & {
@@ -79,4 +79,25 @@ export function editorNote(list: { reachable: boolean; recordings?: { ref: strin
   if (!list.reachable) return 'the OBS PC is not reachable right now. your segments are kept.';
   if (!list.recordings?.some((r) => r.ref === ref)) return 'this recording is no longer listed on the OBS PC. your segments are kept.';
   return null;
+}
+
+/**
+ * The shows the agenda has during a recording, in the order they start: what a night most likely
+ * contains. A hint only, like every agenda time, so it never throws: anything it cannot read (a
+ * missing list, an entry without an id or times) is skipped, and the answer is then just shorter.
+ */
+export function showsDuringRecording<T extends { id: string; date: string; startTime: string; endTime: string }>(
+  recordedAtMs: number,
+  durationS: number,
+  shows: readonly T[] | null | undefined
+): T[] {
+  try {
+    if (!Array.isArray(shows) || !(durationS > 0) || !Number.isFinite(recordedAtMs)) return [];
+    const usable = shows.filter((s) => s && typeof s.id === 'string');
+    const byId = new Map(usable.map((s) => [s.id, s]));
+    const slots = usable.map(agendaSlot).filter((s): s is AgendaSlot => s !== null);
+    return suggestSegments(recordedAtMs, durationS, slots).flatMap((s) => byId.get(s.showId) ?? []);
+  } catch {
+    return [];
+  }
 }

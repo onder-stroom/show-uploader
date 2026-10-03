@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agendaSlot, editorNote, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../../src/upload/segments';
+import { agendaSlot, editorNote, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, showsDuringRecording, type Draft } from '../../src/upload/segments';
 
 describe('timecodes', () => {
   it('formats with tenths, hours only when needed', () => {
@@ -93,5 +93,37 @@ describe('newSegmentAt at the edge of another segment', () => {
   it('still refuses to start inside a segment, or a hair before its end', () => {
     expect(newSegmentAt(3820.6, 15480, [{ startS: 217.6, endS: 3820.7 }])).toBeNull();
     expect(newSegmentAt(300, 15480, [{ startS: 217.6, endS: 3820.7 }])).toBeNull();
+  });
+});
+
+describe('showsDuringRecording', () => {
+  const show = (id: string, date: string, startTime: string, endTime: string) => ({ id, title: id, date, startTime, endTime });
+  const recordedAt = Date.UTC(2026, 9, 2, 14, 0, 0); // 14:00 UTC, 4 hours long
+  const hours = 4 * 3600;
+
+  it('lists the agenda shows that overlap the recording, in the order they start', () => {
+    const shows = [show('late', '2026-10-02', '16:00', '18:00'), show('early', '2026-10-02', '14:00', '16:00'), show('other-day', '2026-10-03', '14:00', '16:00')];
+    expect(showsDuringRecording(recordedAt, hours, shows).map((s) => s.id)).toEqual(['early', 'late']);
+  });
+
+  it('includes a show that only starts or ends inside the recording, and a night that crosses midnight', () => {
+    const shows = [show('before', '2026-10-02', '12:00', '14:30'), show('after', '2026-10-02', '17:30', '20:00'), show('over-midnight', '2026-10-01', '23:00', '15:00')];
+    // 'before' and 'over-midnight' are both already on air when the recording starts, so they tie.
+    expect(showsDuringRecording(recordedAt, hours, shows).map((s) => s.id)).toEqual(['before', 'over-midnight', 'after']);
+  });
+
+  it('is empty when nothing overlaps, there is no duration yet, or a show has no usable times', () => {
+    expect(showsDuringRecording(recordedAt, hours, [show('x', '2026-10-09', '14:00', '16:00')])).toEqual([]);
+    expect(showsDuringRecording(recordedAt, 0, [show('x', '2026-10-02', '14:00', '16:00')])).toEqual([]);
+    expect(showsDuringRecording(recordedAt, hours, [show('bad', '', '', '')])).toEqual([]);
+  });
+
+  it('degrades to an empty list, never an error, when the agenda data is missing or malformed', () => {
+    expect(showsDuringRecording(recordedAt, hours, undefined)).toEqual([]);
+    expect(showsDuringRecording(recordedAt, hours, null)).toEqual([]);
+    expect(showsDuringRecording(recordedAt, hours, 'nope' as never)).toEqual([]);
+    expect(showsDuringRecording(NaN, hours, [show('x', '2026-10-02', '14:00', '16:00')])).toEqual([]);
+    const mixed = [null, undefined, { title: 'no id' }, show('ok', '2026-10-02', '14:00', '16:00')] as never[];
+    expect(showsDuringRecording(recordedAt, hours, mixed).map((s) => (s as { id: string }).id)).toEqual(['ok']);
   });
 });
