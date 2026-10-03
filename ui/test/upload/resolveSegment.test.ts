@@ -26,8 +26,13 @@ describe('resolveSegment', () => {
     expect(resolveSegment({ cut: cut('unknown'), staged })).toEqual({ state: 'ready', filename: 'a.mp4' });
   });
 
-  it('a finished job whose staged row has not arrived yet is still finishing, not ready', () => {
-    expect(resolveSegment({ cut: cut('done') })).toEqual({ state: 'finishing' });
+  it('a finished job whose video is not on the show says so, instead of "finishing" forever', () => {
+    expect(resolveSegment({ cut: cut('done') })).toEqual({ state: 'unstaged', other: null });
+  });
+
+  it('and names the different video that is there, so a wrong match can be told from a missing one', () => {
+    expect(resolveSegment({ cut: cut('done'), otherStaged: 'older.mp4' })).toEqual({ state: 'unstaged', other: 'older.mp4' });
+    expect(resolveSegment({ cut: cut('done'), staged, otherStaged: 'a.mp4' })).toEqual({ state: 'ready', filename: 'a.mp4' });
   });
 
   it('a failed attempt is shown as failed with its reason, even if an older video is staged', () => {

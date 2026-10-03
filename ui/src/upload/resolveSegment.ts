@@ -4,6 +4,8 @@ import type { StagedVideo } from './resolveVideo';
 export type CutStatusView = {
   state: 'queued' | 'cutting' | 'uploading' | 'finishing' | 'done' | 'failed' | 'unknown';
   error: string | null;
+  /** The staged video's filename the cut was made with: what to look for on the show. */
+  filename?: string;
 };
 
 export type SegmentStatus =
@@ -11,6 +13,8 @@ export type SegmentStatus =
   | { state: 'queued' | 'cutting' | 'finishing' }
   | { state: 'uploading'; fraction: number | null }
   | { state: 'ready'; filename: string }
+  /** The cut finished but the show has no video from it: none staged, or a different one (`other`). */
+  | { state: 'unstaged'; other: string | null }
   | { state: 'failed'; message: string };
 
 /**
@@ -26,8 +30,10 @@ export function resolveSegment(input: {
   cut?: CutStatusView | null;
   staged?: StagedVideo | null;
   uploadFraction?: number | null;
+  /** The filename of whatever IS staged on the show, when it is not this segment's. */
+  otherStaged?: string | null;
 }): SegmentStatus {
-  const { cut, staged, uploadFraction } = input;
+  const { cut, staged, uploadFraction, otherStaged } = input;
   const state = cut?.state ?? 'unknown';
 
   if (state === 'failed') return { state: 'failed', message: cut?.error ?? 'The cut failed' };
@@ -36,5 +42,5 @@ export function resolveSegment(input: {
 
   // done / unknown: the staged video is the durable truth (the job may have aged out).
   if (staged) return { state: 'ready', filename: staged.filename };
-  return state === 'done' ? { state: 'finishing' } : { state: 'draft' };
+  return state === 'done' ? { state: 'unstaged', other: otherStaged ?? null } : { state: 'draft' };
 }

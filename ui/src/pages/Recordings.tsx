@@ -484,10 +484,13 @@ function SegmentRow(props: {
   onChange(change: Partial<Draft>): void; onRemove(): void; onAddShow(typedTitle: string): void; onToggleFreeze(): void;
 }) {
   const { draft, cut, index } = props;
-  // Only a video whose filename matches THIS cut counts as this segment's result.
+  // Only a video whose filename matches THIS cut counts as this segment's result. The cut knows the name it
+  // was made with; the segment's current times are only the fallback, since nudging a segment after the fact
+  // must not make a finished cut look unfinished.
   const staged = useStaged(draft.showId ?? undefined).data;
-  const matching = staged && staged.filename === props.expectedFilename ? staged : null;
-  const status = resolveSegment({ cut, staged: matching, uploadFraction: props.uploadFraction });
+  const expected = cut?.filename ?? props.expectedFilename;
+  const matching = staged && staged.filename === expected ? staged : null;
+  const status = resolveSegment({ cut, staged: matching, uploadFraction: props.uploadFraction, otherStaged: staged?.filename ?? null });
   const running = isActive(cut);
   const locked = running || !!draft.frozen;
   const replaces = staged && !matching && status.state === 'draft';
@@ -549,6 +552,7 @@ function statusLabel(s: SegmentStatus): string {
     case 'uploading': return s.fraction === null ? 'uploading…' : `uploading ${Math.round(s.fraction * 100)}%`;
     case 'finishing': return 'finishing…';
     case 'ready': return '✓ staged for publishing';
+    case 'unstaged': return s.other ? `done, but the show has a different video staged (${s.other})` : 'done, but its video is not on the show yet';
     case 'failed': return s.message;
   }
 }

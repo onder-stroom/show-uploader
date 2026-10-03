@@ -1,7 +1,8 @@
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import { c } from '../theme';
-import { cutLabel, isRunning, type CutItem } from '../upload/cutLabel';
+import { useStaged } from '../api/hooks';
+import { cutLabel, doneLabel, isRunning, type CutItem } from '../upload/cutLabel';
 import { formatTimecode } from '../upload/segments';
 
 type Props = {
@@ -33,14 +34,22 @@ export default function CutsPanel({ cuts, titleOf, fractionOf, paused }: Props) 
         </Typography>
       )}
       {cuts.map((cut) => (
-        <Stack key={cut.cutId} direction="row" spacing={2} sx={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
-          <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 0 }} noWrap>{titleOf(cut.showId)}</Typography>
-          <Typography variant="caption" color="text.secondary">{formatTimecode(cut.startS)} → {formatTimecode(cut.endS)}</Typography>
-          <Typography variant="caption" sx={{ color: cut.state === 'failed' ? c.danger : cut.state === 'done' ? c.ok : c.muted }}>
-            {cutLabel(cut, fractionOf(cut.showId))}
-          </Typography>
-        </Stack>
+        <CutRow key={cut.cutId} cut={cut} title={titleOf(cut.showId)} fraction={fractionOf(cut.showId)} />
       ))}
+    </Stack>
+  );
+}
+
+function CutRow({ cut, title, fraction }: { cut: CutItem; title: string; fraction: number | null }) {
+  // A finished cut is only "ready" if its video is really the show's staged one.
+  const staged = useStaged(cut.state === 'done' ? cut.showId : undefined).data;
+  const text = cut.state === 'done' ? doneLabel(cut.filename, staged?.filename) : cutLabel(cut, fraction);
+  const good = cut.state === 'done' && staged?.filename === cut.filename;
+  return (
+    <Stack direction="row" spacing={2} sx={{ alignItems: 'baseline', flexWrap: 'wrap' }}>
+      <Typography variant="body2" sx={{ fontWeight: 600, minWidth: 0 }} noWrap>{title}</Typography>
+      <Typography variant="caption" color="text.secondary">{formatTimecode(cut.startS)} → {formatTimecode(cut.endS)}</Typography>
+      <Typography variant="caption" sx={{ color: cut.state === 'failed' ? c.danger : good ? c.ok : c.muted }}>{text}</Typography>
     </Stack>
   );
 }
