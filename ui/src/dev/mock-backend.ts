@@ -24,6 +24,7 @@ const mockSignedUrl = () => `data:video/mp4;base64,#sig=${Math.random().toString
 const MOCK_CONVERT_POLLS = 4;
 const previewPolls = new Map<string, number>();
 const cutPolls = new Map<string, number>();
+const mockCuts = new Map<string, { cutId: string; ref: string; showId: string; startS: number; endS: number; filename: string; createdAtMs: number }>();
 const previewMp4Key = (key: string) => key.replace(/\.[^./]+$/, '.mp4');
 
 function trpcBody(datas: unknown[]) {
@@ -184,7 +185,7 @@ function resolve(proc: string, input: unknown): unknown {
     case 'recordings.rescan':
       return { reachable: true, recordings: recordings.map((r) => ({ ...r, hasDraft: mockDrafts.has(r.ref) })) };
     case 'recordings.agentStatus':
-      return { reachable: true, protocol: 2, build: 'mock123', expected: 2, current: true };
+      return { reachable: true, protocol: 2, build: 'mock123', expected: 2, current: true, recordingActive: false };
     case 'recordings.getDraft':
       return { draft: mockDrafts.get((input as { ref: string }).ref) ?? null, problem: null };
     case 'recordings.saveDraft': {
@@ -200,17 +201,28 @@ function resolve(proc: string, input: unknown): unknown {
     case 'recordings.signPreview':
       return { path: mockSignedUrl() };
     case 'recordings.startCuts': {
-      const segs = (input as { segments: { showId: string }[] }).segments;
+      const { ref, segments: segs } = input as { ref: string; segments: { showId: string; startS: number; endS: number }[] };
+      for (const s of segs) {
+        const cutId = `mock-cut-${s.showId}`;
+        mockCuts.set(cutId, { cutId, ref, showId: s.showId, startS: s.startS, endS: s.endS, filename: `${cutId}.mp4`, createdAtMs: Date.now() });
+        cutPolls.set(cutId, 0);
+      }
       return { cuts: segs.map((s) => ({ cutId: `mock-cut-${s.showId}`, showId: s.showId })) };
     }
-    case 'recordings.cutStatuses': {
-      // Walk each cut through the real states, one per poll, so the progress UI is reachable.
-      const states = ['queued', 'cutting', 'uploading', 'finishing', 'done'] as const;
-      return ((input as { cutIds: string[] }).cutIds).map((cutId) => {
-        const n = cutPolls.get(cutId) ?? 0;
-        cutPolls.set(cutId, n + 1);
-        return { cutId, state: states[Math.min(n, states.length - 1)], error: null };
+    case 'recordings.cuts': {
+      // Like the real queue, one cut runs at a time and the rest wait; each walks the real states, one per poll.
+      const states = ['cutting', 'uploading', 'uploading', 'finishing', 'done'] as const;
+      const all = [...mockCuts.values()].sort((a, b) => a.createdAtMs - b.createdAtMs);
+      let active = true;
+      const out = all.map((c) => {
+        const n = cutPolls.get(c.cutId) ?? 0;
+        const finished = n >= states.length;
+        if (!finished && active) cutPolls.set(c.cutId, n + 1);
+        const state = finished ? 'done' : active ? states[Math.min(n, states.length - 1)] : 'queued';
+        if (!finished) active = false;
+        return { ...c, state, error: null };
       });
+      return out.reverse();
     }
     case 'storage.overview':
       return {

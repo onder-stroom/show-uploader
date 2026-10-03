@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import { deps } from '../../deps';
 import { UseCaseError } from '../../usecases/errors';
-import { agentStatus, cutStatuses, listRecordings, loadDraft, recordingPeaks, rescanRecordings, saveDraft, signPreviewPath, startCuts } from '../../usecases/recording-cuts';
+import { agentStatus, listCuts, listRecordings, loadDraft, recordingPeaks, rescanRecordings, saveDraft, signPreviewPath, startCuts } from '../../usecases/recording-cuts';
 import { protectedProcedure, router } from '../trpc';
 
 // Validation and error mapping only. The rules live in usecases/recording-cuts.ts.
@@ -76,7 +76,6 @@ export const recordingsRouter = router({
       }
     }),
 
-  cutStatuses: protectedProcedure
-    .input(z.object({ cutIds: z.array(z.string().min(1)).max(50) }))
-    .query(({ input }) => cutStatuses(input.cutIds, deps)),
+  /** Every cut the queue knows and where it is: running, waiting, and the recently finished or failed. */
+  cuts: protectedProcedure.query(() => listCuts(deps)),
 });

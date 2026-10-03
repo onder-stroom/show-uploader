@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { isRunning } from '../upload/cutLabel';
 import { api } from './client';
 import { useTRPC, trpcClient } from './trpc';
 
@@ -489,20 +490,20 @@ export function usePreviewPath(ref: string | null) {
 
 export function useStartCuts() {
   const trpc = useTRPC();
-  return useMutation(trpc.recordings.startCuts.mutationOptions());
+  const qc = useQueryClient();
+  // The new cuts show up in the list at once instead of at the next poll.
+  return useMutation(
+    trpc.recordings.startCuts.mutationOptions({ onSuccess: () => qc.invalidateQueries({ queryKey: trpc.recordings.cuts.queryKey() }) })
+  );
 }
 
-// Polls while any cut is still running; stops once every one is done or failed.
-export function useCutStatuses(cutIds: string[]) {
+// Every cut the server knows, from the queue: it is the same on a reload, in another tab, on another
+// machine. Polls quickly while anything is running, slowly otherwise.
+export function useCuts() {
   const trpc = useTRPC();
   return useQuery(
-    trpc.recordings.cutStatuses.queryOptions(
-      { cutIds },
-      {
-        enabled: cutIds.length > 0,
-        refetchInterval: (query) =>
-          query.state.data?.every((s) => s.state === 'done' || s.state === 'failed') ? false : 3_000,
-      }
-    )
+    trpc.recordings.cuts.queryOptions(undefined, {
+      refetchInterval: (query) => (query.state.data?.some(isRunning) ? 3_000 : 15_000),
+    })
   );
 }
