@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { AGENT_PROTOCOL } from '@show-uploader/domain';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CutManager } from '../src/cuts';
 import { Library } from '../src/library';
@@ -152,6 +153,67 @@ describe('recordings', () => {
 
   it('reports health with whether OBS is recording', async () => {
     expect(await (await fetch(`${base}/v1/health`, { headers: auth })).json()).toMatchObject({ ok: true, ready: 1, recordingActive: false });
+  });
+
+  it('says which protocol and build it is, so the uploader can tell an old service from a current one', async () => {
+    const body = (await (await fetch(`${base}/v1/health`, { headers: auth })).json()) as { protocol: number; build: string };
+    expect(body.protocol).toBe(AGENT_PROTOCOL);
+    expect(body.build).toBe('dev'); // run from source, not from a stamped bundle
+  });
+});
+
+describe('saved segments', () => {
+  const segs = [{ startS: 10, endS: 70, showId: 'show-a', frozen: true }, { startS: 100, endS: 160, showId: null }];
+  const put = (ref: string, body: unknown) => fetch(`${base}/v1/recordings/${ref}/draft`, { method: 'PUT', headers: json, body: JSON.stringify(body) });
+  const get = (ref: string) => fetch(`${base}/v1/recordings/${ref}/draft`, { headers: auth });
+
+  it('has no draft until one is saved, and says so with a code', async () => {
+    const [s] = lib.list();
+    const res = await get(s.ref);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ code: 'NO_DRAFT' });
+    expect((await (await fetch(`${base}/v1/recordings`, { headers: auth })).json() as { hasDraft: boolean }[])[0].hasDraft).toBe(false);
+  });
+
+  it('saves segments next to the recording and hands them back, and the list marks the recording', async () => {
+    const [s] = lib.list();
+    const saved = await put(s.ref, { segments: segs });
+    expect(saved.status).toBe(200);
+    expect(await get(s.ref).then((r) => r.json())).toMatchObject({ segments: segs });
+    expect((await (await fetch(`${base}/v1/recordings`, { headers: auth })).json() as { hasDraft: boolean }[])[0].hasDraft).toBe(true);
+  });
+
+  it('an empty list clears the draft', async () => {
+    const [s] = lib.list();
+    await put(s.ref, { segments: segs });
+    expect((await put(s.ref, { segments: [] })).status).toBe(200);
+    expect((await get(s.ref)).status).toBe(404);
+  });
+
+  it('refuses a malformed body without touching the saved draft', async () => {
+    const [s] = lib.list();
+    await put(s.ref, { segments: segs });
+    for (const bad of [{}, { segments: 'x' }, { segments: [{ startS: -1, endS: 5, showId: null }] }, { segments: [{ startS: 1, endS: 5, showId: 7 }] }]) {
+      const res = await put(s.ref, bad);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ code: 'BAD_SEGMENTS' });
+    }
+    expect(await get(s.ref).then((r) => r.json())).toMatchObject({ segments: segs });
+  });
+
+  it('404s an unknown recording with its own code, for both routes', async () => {
+    const a = await get('ffffffffffffffff');
+    expect(a.status).toBe(404);
+    expect(await a.json()).toMatchObject({ code: 'UNKNOWN_RECORDING' });
+    const b = await put('ffffffffffffffff', { segments: segs });
+    expect(b.status).toBe(404);
+    expect(await b.json()).toMatchObject({ code: 'UNKNOWN_RECORDING' });
+  });
+
+  it('needs the token like every other route', async () => {
+    const [s] = lib.list();
+    expect((await fetch(`${base}/v1/recordings/${s.ref}/draft`)).status).toBe(401);
+    expect((await fetch(`${base}/v1/recordings/${s.ref}/draft`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status).toBe(401);
   });
 });
 

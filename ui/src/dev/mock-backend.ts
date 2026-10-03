@@ -180,9 +180,20 @@ function resolve(proc: string, input: unknown): unknown {
     // Deliberately unhealthy figures: a nearly-full object disk and a stale job
     // folder, so the warning states are reachable without staging a real outage.
     case 'recordings.list':
-      return { reachable: true, recordings };
+      return { reachable: true, recordings: recordings.map((r) => ({ ...r, hasDraft: mockDrafts.has(r.ref) })) };
     case 'recordings.rescan':
-      return { reachable: true, recordings };
+      return { reachable: true, recordings: recordings.map((r) => ({ ...r, hasDraft: mockDrafts.has(r.ref) })) };
+    case 'recordings.agentStatus':
+      return { reachable: true, protocol: 2, build: 'mock123', expected: 2, current: true };
+    case 'recordings.getDraft':
+      return { draft: mockDrafts.get((input as { ref: string }).ref) ?? null, problem: null };
+    case 'recordings.saveDraft': {
+      const { ref, segments } = input as { ref: string; segments: unknown[] };
+      const draft = { segments, savedAtMs: Date.now() };
+      if (segments.length === 0) mockDrafts.delete(ref);
+      else mockDrafts.set(ref, draft);
+      return draft;
+    }
     case 'recordings.peaks':
       // A plausible set: quiet gaps between louder stretches, one value per second.
       return Array.from({ length: 14_400 }, (_, i) => Math.round((0.15 + 0.6 * Math.abs(Math.sin(i / 400)) * Math.abs(Math.sin(i * 12.9898))) * 1000) / 1000);
@@ -289,6 +300,9 @@ function resolve(proc: string, input: unknown): unknown {
 }
 
 const json = (body: string) => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+
+// Saved segments per recording, kept in memory so a reload of the mock keeps them for the session.
+const mockDrafts = new Map<string, { segments: unknown[]; savedAtMs: number }>();
 
 export function install() {
   // A fake signed-in user, written where oidc-client-ts looks for it, so the

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
-  cutFilename, validateSegments,
-  type AgentRecording, type CutStep, type UnreachableAgent,
+  AGENT_PROTOCOL, cutFilename, parseDraftSegments, validateSegments,
+  type AgentRecording, type CutStep, type RecordingDraft, type UnreachableAgent,
 } from '@show-uploader/domain';
 import type { ApiDeps, CutJobView } from '../ports';
 import { signPreview } from '../services/preview-signature';
@@ -14,6 +14,47 @@ function reachability(list: AgentRecording[] | null) {
 
 export async function listRecordings({ recordings }: Pick<ApiDeps, 'recordings'>) {
   return reachability(await recordings.list());
+}
+
+/**
+ * Which build of the PC service answers, and whether it is new enough for what the uploader does.
+ * A service that reports no protocol predates the number and counts as 1.
+ */
+export async function agentStatus({ recordings }: Pick<ApiDeps, 'recordings'>) {
+  const h = await recordings.health();
+  if (!h) return { reachable: false } as UnreachableAgent;
+  const protocol = typeof h.protocol === 'number' ? h.protocol : 1;
+  return { reachable: true as const, protocol, build: typeof h.build === 'string' ? h.build : null, expected: AGENT_PROTOCOL, current: protocol >= AGENT_PROTOCOL };
+}
+
+export type DraftProblem = 'unreachable' | 'outdated';
+
+/**
+ * The segments saved for a recording. Opening the editor must never fail because of them, so a PC
+ * that is off or too old is an answer ("problem"), not an error: the editor just starts empty.
+ */
+export async function loadDraft(ref: string, { recordings }: Pick<ApiDeps, 'recordings'>): Promise<{ draft: RecordingDraft | null; problem: DraftProblem | null }> {
+  const r = await recordings.getDraft(ref);
+  switch (r.kind) {
+    case 'ok': return { draft: r.draft, problem: null };
+    case 'unsupported': return { draft: null, problem: 'outdated' };
+    case 'gone': throw new UseCaseError('NOT_FOUND', 'That recording is no longer on the OBS PC');
+    default: return { draft: null, problem: 'unreachable' };
+  }
+}
+
+/** Save the operator's segments next to the recording on the PC. Saving is asked for, so a failure says why. */
+export async function saveDraft(ref: string, segments: unknown, { recordings }: Pick<ApiDeps, 'recordings'>): Promise<RecordingDraft> {
+  const clean = parseDraftSegments(segments);
+  if (!clean) throw new UseCaseError('PRECONDITION_FAILED', 'Those segments cannot be saved');
+  const r = await recordings.saveDraft(ref, clean);
+  switch (r.kind) {
+    case 'ok': return r.draft ?? { segments: [], savedAtMs: Date.now() };
+    case 'unsupported': throw new UseCaseError('PRECONDITION_FAILED', 'The PC service is too old to save segments. Update it, then try again.');
+    case 'gone': throw new UseCaseError('NOT_FOUND', 'That recording is no longer on the OBS PC');
+    case 'rejected': throw new UseCaseError('PRECONDITION_FAILED', 'The PC refused those segments');
+    default: throw new UseCaseError('PRECONDITION_FAILED', 'The OBS PC is not reachable, so nothing was saved');
+  }
 }
 
 /** Same answer as the list, after the PC has looked at its folder again. */

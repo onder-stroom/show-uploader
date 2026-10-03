@@ -6,6 +6,25 @@
 
 export const AGENT_API_PREFIX = '/v1';
 
+/**
+ * What the PC service can do, as one number the uploader compares. Bumped whenever the uploader
+ * starts depending on something an older PC service lacks. 1 is everything before this number
+ * existed (a service that does not report one); 2 added saved segments.
+ */
+export const AGENT_PROTOCOL = 2;
+
+/** `GET /v1/health`. `protocol` and `build` are missing from a service that predates them. */
+export type AgentHealth = {
+  ok: boolean;
+  protocol?: number;
+  /** The commit the service was built from, or "dev" when run from source. */
+  build?: string;
+  ready: number;
+  preparing: number;
+  failed: number;
+  recordingActive: boolean;
+};
+
 export type RecordingState = 'preparing' | 'ready' | 'failed';
 
 export type AgentRecording = {

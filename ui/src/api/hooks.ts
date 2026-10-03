@@ -446,6 +446,33 @@ export function useRescanRecordings() {
   );
 }
 
+// Which build the PC service is, and whether it is new enough for what the uploader does.
+export function useAgentStatus() {
+  const trpc = useTRPC();
+  return useQuery(trpc.recordings.agentStatus.queryOptions(undefined, { refetchInterval: 60_000 }));
+}
+
+// The segments saved for a recording. Read once per opening: the editor owns them from then on.
+export function useRecordingDraft(ref: string) {
+  const trpc = useTRPC();
+  return useQuery(trpc.recordings.getDraft.queryOptions({ ref }, { staleTime: Infinity, retry: false }));
+}
+
+export function useSaveRecordingDraft() {
+  const trpc = useTRPC();
+  const qc = useQueryClient();
+  return useMutation(
+    trpc.recordings.saveDraft.mutationOptions({
+      // Only what a save changes: the list's "saved" mark and the draft itself, not the waveform.
+      onSuccess: () =>
+        Promise.all([
+          qc.invalidateQueries({ queryKey: trpc.recordings.list.queryKey() }),
+          qc.invalidateQueries({ queryKey: trpc.recordings.getDraft.queryKey() }),
+        ]),
+    })
+  );
+}
+
 export function useRecordingPeaks(ref: string | null) {
   const trpc = useTRPC();
   return useQuery(trpc.recordings.peaks.queryOptions({ ref: ref ?? '' }, { enabled: !!ref, staleTime: Infinity }));

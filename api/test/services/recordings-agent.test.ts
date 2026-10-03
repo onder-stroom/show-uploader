@@ -96,4 +96,57 @@ describe('recordings agent adapter', () => {
     await upstream?.body?.cancel();
     expect(await createRecordingsAgent({ baseUrl: 'http://127.0.0.1:1', token: t }).preview('r1', undefined)).toBeNull();
   });
+
+  it('reads the service status, and is null when it cannot', async () => {
+    const baseUrl = await serve((_req, res) => res.setHeader('content-type', 'application/json').end(JSON.stringify({ ok: true, protocol: 2, build: 'abc1234' })));
+    expect(await createRecordingsAgent({ baseUrl, token: 't'.repeat(20) }).health()).toMatchObject({ protocol: 2, build: 'abc1234' });
+    expect(seen).toMatchObject({ url: '/v1/health' });
+    expect(await createRecordingsAgent({}).health()).toBeNull();
+    expect(await createRecordingsAgent({ baseUrl: 'http://127.0.0.1:1', token: 't'.repeat(20) }).health()).toBeNull();
+  });
+
+  describe('saved segments', () => {
+    const agent = (baseUrl: string) => createRecordingsAgent({ baseUrl, token: 't'.repeat(20) });
+    const answer = (status: number, body: unknown) => (_req: http.IncomingMessage, res: http.ServerResponse) => {
+      res.statusCode = status;
+      res.setHeader('content-type', 'application/json').end(typeof body === 'string' ? body : JSON.stringify(body));
+    };
+    const draft = { segments: [{ startS: 1, endS: 9, showId: null }], savedAtMs: 7 };
+
+    it('reads a draft, and "no draft yet" is an answer, not a failure', async () => {
+      expect(await agent(await serve(answer(200, draft))).getDraft('r1')).toEqual({ kind: 'ok', draft });
+      expect(seen).toMatchObject({ url: '/v1/recordings/r1/draft', method: 'GET' });
+      await closeServer();
+      expect(await agent(await serve(answer(404, { code: 'NO_DRAFT' }))).getDraft('r1')).toEqual({ kind: 'ok', draft: null });
+    });
+
+    it('saves with a PUT of the segments', async () => {
+      let body = '';
+      const url = await serve((req, res) => {
+        req.on('data', (c) => (body += c));
+        req.on('end', () => answer(200, draft)(req, res));
+      });
+      expect(await agent(url).saveDraft('r1', draft.segments)).toEqual({ kind: 'ok', draft });
+      expect(seen).toMatchObject({ url: '/v1/recordings/r1/draft', method: 'PUT' });
+      expect(JSON.parse(body)).toEqual({ segments: draft.segments });
+    });
+
+    it('tells a recording that is gone from a service that has no such route at all', async () => {
+      expect(await agent(await serve(answer(404, { code: 'UNKNOWN_RECORDING' }))).getDraft('r1')).toEqual({ kind: 'gone' });
+      await closeServer();
+      // An old service answers a route it does not have with express's plain 404, no code of ours.
+      expect(await agent(await serve(answer(404, '<html>Cannot GET</html>'))).getDraft('r1')).toEqual({ kind: 'unsupported' });
+      await closeServer();
+      expect(await agent(await serve(answer(404, '<html>Cannot PUT</html>'))).saveDraft('r1', [])).toEqual({ kind: 'unsupported' });
+    });
+
+    it('maps a refusal, a wrong token and an unreachable service', async () => {
+      expect(await agent(await serve(answer(400, { code: 'BAD_SEGMENTS' }))).saveDraft('r1', [])).toEqual({ kind: 'rejected' });
+      await closeServer();
+      expect(await agent(await serve(answer(401, { error: 'unauthorized' }))).getDraft('r1')).toEqual({ kind: 'unreachable' });
+      await closeServer();
+      expect(await agent('http://127.0.0.1:1').getDraft('r1')).toEqual({ kind: 'unreachable' });
+      expect(await createRecordingsAgent({}).saveDraft('r1', [])).toEqual({ kind: 'unreachable' });
+    });
+  });
 });

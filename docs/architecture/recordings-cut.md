@@ -14,6 +14,15 @@ code must keep. Design rationale: `docs/superpowers/specs/2026-10-01-recordings-
 > recording with a prepare or a cut running is pinned (`Library.pin`) and forgotten at the
 > next scan once that work ends. The page's rescan button runs the scan now.
 
+> **Saved segments** (the operator's work in progress in the editor) live on the PC in `draft.json` next to
+> the recording, not in Postgres: the folder is the truth, and they disappear with the recording. They are a
+> separate file from the sidecar because preparing rewrites the whole sidecar from its own copy and would
+> overwrite a draft saved meanwhile. `parseDraftSegments` (domain) is the one rule for what may be saved.
+>
+> **`AGENT_PROTOCOL`** (domain) is one number for what the PC service can do. Bump it whenever the uploader
+> starts depending on something an older PC service lacks; `/v1/health` reports the service's own, the
+> Recordings page warns when it is lower, and a service that reports none counts as 1.
+
 ## The flow
 
 1. **PC** (`watcher/`, a Windows service, not in Docker): watches the OBS recordings

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { RecordingState } from '@show-uploader/domain';
+import { parseDraftSegments, type DraftSegment, type RecordingDraft, type RecordingState } from '@show-uploader/domain';
 
 /**
  * The recordings on disk, as the service sees them. The folder is the source of
@@ -40,7 +40,7 @@ export type Sidecar = {
   cuts: { cutId: string; uploadedAtMs: number }[];
 };
 
-export type WorkPaths = { dir: string; master: string; preview: string; peaks: string; state: string };
+export type WorkPaths = { dir: string; master: string; preview: string; peaks: string; state: string; draft: string };
 
 export function recordingRef(filename: string, sizeBytes: number, mtimeMs: number): string {
   return createHash('sha1').update(`${filename}\0${sizeBytes}\0${Math.floor(mtimeMs)}`).digest('hex').slice(0, 16);
@@ -88,6 +88,9 @@ export class Library {
       preview: path.join(dir, 'preview.mp4'),
       peaks: path.join(dir, 'peaks.json'),
       state: path.join(dir, 'state.json'),
+      // Its own file, not part of the sidecar: preparing rewrites the whole sidecar from its own copy and
+      // would overwrite a draft saved meanwhile.
+      draft: path.join(dir, 'draft.json'),
     };
   }
 
@@ -180,6 +183,38 @@ export class Library {
     const tmp = `${p.state}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(s));
     fs.renameSync(tmp, p.state);
+  }
+
+  /** The operator's saved segments for this recording; null when there are none or the file is unreadable. */
+  getDraft(ref: string): RecordingDraft | null {
+    if (!REF_RE.test(ref)) return null;
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.paths(ref).draft, 'utf8')) as { segments?: unknown; savedAtMs?: unknown };
+      const segments = parseDraftSegments(raw.segments);
+      return segments && typeof raw.savedAtMs === 'number' ? { segments, savedAtMs: raw.savedAtMs } : null;
+    } catch {
+      return null; // a missing or corrupt draft is simply no draft
+    }
+  }
+
+  hasDraft(ref: string): boolean {
+    return REF_RE.test(ref) && fs.existsSync(this.paths(ref).draft);
+  }
+
+  /** Save the operator's segments next to the recording. An empty list clears the draft. Null for an unknown recording. */
+  saveDraft(ref: string, segments: DraftSegment[], nowMs: number): RecordingDraft | null {
+    if (!this.get(ref)) return null;
+    const p = this.paths(ref);
+    const draft: RecordingDraft = { segments, savedAtMs: nowMs };
+    if (segments.length === 0) {
+      fs.rmSync(p.draft, { force: true });
+      return draft;
+    }
+    // Write-then-rename, like the sidecar: a crash never leaves half a draft.
+    const tmp = `${p.draft}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(draft));
+    fs.renameSync(tmp, p.draft);
+    return draft;
   }
 
   /** The file a cut reads: the MP4 master if there is one, else the original, else nothing. */

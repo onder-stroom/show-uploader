@@ -1,4 +1,5 @@
 import { MIN_SEGMENT_SECONDS, suggestSegments, type AgendaSlot, type Segment } from '@domain/recording-segments';
+import type { DraftSegment } from '@domain/recordings-contract';
 
 /** The editor's working copy of a segment. The server re-validates everything with the domain rules. */
 export type Draft = Segment & {
@@ -100,4 +101,29 @@ export function showsDuringRecording<T extends { id: string; date: string; start
   } catch {
     return [];
   }
+}
+
+/** The editor's segments as they are saved: no ids, which only exist to key rows. */
+export function toDraftSegments(segments: Draft[]): DraftSegment[] {
+  return segments.map((s) => ({ startS: s.startS, endS: s.endS, showId: s.showId, ...(s.frozen ? { frozen: true } : {}) }));
+}
+
+/** What identifies a set of segments, so "unsaved changes" is a comparison and not bookkeeping. */
+export const draftKey = (segments: Draft[]): string => JSON.stringify(toDraftSegments(segments));
+
+/**
+ * Saved segments back into editor rows. A show that is no longer in the to-process list (it was
+ * published meanwhile) is cleared, so a row never claims a show the picker cannot offer; pass null
+ * when the list is not known and every show is kept.
+ */
+export function fromDraftSegments(saved: DraftSegment[], newId: () => string, knownShowIds: ReadonlySet<string> | null): Draft[] {
+  return saved
+    .map((s) => ({
+      id: newId(),
+      startS: s.startS,
+      endS: s.endS,
+      showId: s.showId && (!knownShowIds || knownShowIds.has(s.showId)) ? s.showId : null,
+      ...(s.frozen ? { frozen: true } : {}),
+    }))
+    .sort((a, b) => a.startS - b.startS);
 }

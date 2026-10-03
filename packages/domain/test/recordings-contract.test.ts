@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cutFilename, isTerminalCutState } from '../src/recordings-contract';
+import { cutFilename, isTerminalCutState, MAX_DRAFT_SEGMENTS, parseDraftSegments } from '../src/recordings-contract';
 
 describe('isTerminalCutState', () => {
   it('treats done, failed and source_gone as final, the rest as in flight', () => {

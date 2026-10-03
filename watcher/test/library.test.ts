@@ -203,3 +203,56 @@ describe('hardening', () => {
     expect(lib.list()).toHaveLength(1);
   });
 });
+
+
+describe('saved segments', () => {
+  const segs = [{ startS: 10, endS: 70, showId: 'a', frozen: true }, { startS: 90, endS: 150, showId: null }];
+
+  it('saves, reads back and reports a draft; an empty list clears it', () => {
+    touch('night.mkv', 60_000);
+    lib.sync(NOW);
+    const [s] = lib.list();
+    expect(lib.getDraft(s.ref)).toBeNull();
+    expect(lib.hasDraft(s.ref)).toBe(false);
+
+    expect(lib.saveDraft(s.ref, segs, 123)).toEqual({ segments: segs, savedAtMs: 123 });
+    expect(lib.getDraft(s.ref)).toEqual({ segments: segs, savedAtMs: 123 });
+    expect(lib.hasDraft(s.ref)).toBe(true);
+
+    lib.saveDraft(s.ref, [], 456);
+    expect(lib.getDraft(s.ref)).toBeNull();
+    expect(lib.hasDraft(s.ref)).toBe(false);
+  });
+
+  it('survives the sidecar being rewritten, which preparing does from its own copy', () => {
+    touch('night.mkv', 60_000);
+    lib.sync(NOW);
+    const [s] = lib.list();
+    lib.saveDraft(s.ref, segs, 1);
+    lib.save({ ...s, state: 'ready', durationS: 99 });
+    expect(lib.getDraft(s.ref)?.segments).toEqual(segs);
+  });
+
+  it('is gone when the recording is forgotten', () => {
+    const p = touch('night.mkv', 60_000);
+    lib.sync(NOW);
+    const [s] = lib.list();
+    lib.saveDraft(s.ref, segs, 1);
+    fs.rmSync(p);
+    lib.sync(NOW + 10_000);
+    expect(lib.getDraft(s.ref)).toBeNull();
+    expect(fs.existsSync(lib.paths(s.ref).dir)).toBe(false);
+  });
+
+  it('refuses an unknown recording, and treats a corrupt or hand-edited file as no draft', () => {
+    touch('night.mkv', 60_000);
+    lib.sync(NOW);
+    const [s] = lib.list();
+    expect(lib.saveDraft('ffffffffffffffff', segs, 1)).toBeNull();
+    expect(lib.getDraft('not-a-ref')).toBeNull();
+    for (const junk of ['{', '[]', JSON.stringify({ segments: [{ startS: -5, endS: 1, showId: null }], savedAtMs: 1 }), JSON.stringify({ segments: segs })]) {
+      fs.writeFileSync(lib.paths(s.ref).draft, junk);
+      expect(lib.getDraft(s.ref), junk).toBeNull();
+    }
+  });
+});
