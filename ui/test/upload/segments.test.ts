@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  agendaSlot, draftKey, editorNote, formatTimecode, fromDraftSegments, newSegmentAt, parseTimecode, selectAfterRemove, showsDuringRecording,
+  agendaSlot, draftKey, editorNote, firstFreeStart, formatTimecode, fromDraftSegments, newSegmentAt, parseTimecode, selectAfterRemove, showsDuringRecording, startAfterPrevious,
   toDraftSegments, type Draft,
 } from '../../src/upload/segments';
 
@@ -167,5 +167,63 @@ describe('saved segments', () => {
     expect(draftKey([{ ...rows[0], frozen: false }, rows[1]])).not.toBe(key);
     expect(draftKey([rows[0], { ...rows[1], showId: 'c' }])).not.toBe(key);
     expect(draftKey([])).toBe('[]');
+  });
+});
+
+describe('firstFreeStart', () => {
+  const seg = (startS: number, endS: number) => ({ startS, endS });
+
+  it('is the playhead itself when it is free', () => {
+    expect(firstFreeStart(50, [seg(100, 200)])).toBe(50);
+    expect(firstFreeStart(250, [seg(100, 200)])).toBe(250);
+    expect(firstFreeStart(200, [seg(100, 200)])).toBe(200); // sitting on an end is outside
+    expect(firstFreeStart(-5, [])).toBe(0);
+  });
+
+  it('moves to the end of the segment that holds the playhead, which is how adding from inside one works', () => {
+    expect(firstFreeStart(3573, [seg(205.3, 3821.7)])).toBe(3821.7);
+    expect(firstFreeStart(100, [seg(100, 200)])).toBe(200);
+  });
+
+  it('keeps going through segments that touch, and survives overlaps and float noise', () => {
+    expect(firstFreeStart(10, [seg(0, 100), seg(100, 250), seg(250, 300)])).toBe(300);
+    expect(firstFreeStart(10, [seg(0, 100), seg(50, 120)])).toBe(120);
+    expect(firstFreeStart(10, [seg(0, 100.00000000000001), seg(100, 200)])).toBe(200);
+  });
+
+  it('then newSegmentAt gives a segment that starts there', () => {
+    const others = [seg(205.3, 3821.7)];
+    expect(newSegmentAt(firstFreeStart(3573, others), 15480, others)).toEqual({ startS: 3821.7, endS: 5621.7 });
+  });
+});
+
+describe('startAfterPrevious', () => {
+  const seg = (startS: number, endS: number) => ({ startS, endS });
+
+  it('with no segments yet, starts at the playhead', () => {
+    expect(startAfterPrevious(120, [])).toBe(120);
+    expect(startAfterPrevious(-3, [])).toBe(0);
+  });
+
+  it('sticks to the end of the previous segment, whether the playhead is inside it, past it, or in a gap after it', () => {
+    const a = [seg(205.3, 3821.7)];
+    expect(startAfterPrevious(3573, a)).toBe(3821.7); // inside it
+    expect(startAfterPrevious(3821.7, a)).toBe(3821.7); // on its end
+    expect(startAfterPrevious(9000, a)).toBe(3821.7); // far past it: still its end, no gap
+  });
+
+  it('uses the segment that ends last among those that have started, and chains through touching ones', () => {
+    expect(startAfterPrevious(5000, [seg(0, 1000), seg(1000, 3000), seg(4000, 4500)])).toBe(4500);
+    expect(startAfterPrevious(2000, [seg(0, 1000), seg(1000, 3000), seg(4000, 4500)])).toBe(3000);
+    expect(startAfterPrevious(50, [seg(0, 100), seg(100, 200)])).toBe(200);
+  });
+
+  it('with the playhead before every segment there is no previous one, so it is the playhead', () => {
+    expect(startAfterPrevious(60, [seg(500, 900)])).toBe(60);
+  });
+
+  it('then newSegmentAt gives a segment that starts there, short of the next one', () => {
+    const others = [seg(0, 1000), seg(2000, 3000)];
+    expect(newSegmentAt(startAfterPrevious(500, others), 15480, others)).toEqual({ startS: 1000, endS: 2000 });
   });
 });

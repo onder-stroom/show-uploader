@@ -31,7 +31,7 @@ import { slotFromRecording, toShowOption, type ShowOption } from '../upload/show
 import { useEditorHotkeys } from '../upload/useEditorHotkeys';
 import { useSegmentHistory } from '../upload/useSegmentHistory';
 import { useShuttle } from '../upload/useShuttle';
-import { agendaSlot, draftKey, editorNote, fromDraftSegments, showsDuringRecording, toDraftSegments, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../upload/segments';
+import { agendaSlot, draftKey, editorNote, firstFreeStart, fromDraftSegments, startAfterPrevious, showsDuringRecording, toDraftSegments, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../upload/segments';
 
 // The PC's clock is Brussels, and so is everyone reading this page.
 // A cut in these states is being made from the times as they were: editing them now would
@@ -264,12 +264,19 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
     setSelectedId(next[0]?.id ?? null);
   };
 
-  const add = (at = playhead) => {
-    const seg = newSegmentAt(at, durationS, segments);
+  // "add segment" sticks to the end of the previous segment. IN marks at the playhead, or at the first free
+  // spot after it when the playhead is inside a segment: either way adding is never a dead end.
+  const addFrom = (from: number, snap: boolean) =>
+    newSegmentAt(snap ? startAfterPrevious(from, segments) : firstFreeStart(from, segments), durationS, segments);
+  const canAdd = !anyActive && addFrom(playhead, true) !== null;
+  const canMarkNew = !anyActive && addFrom(playhead, false) !== null;
+  const add = (from = playhead, snap = true) => {
+    const seg = addFrom(from, snap);
     if (!seg) return;
     const draft = { ...seg, id: newId(), showId: null };
     commit((all) => [...all, draft].sort((a, b) => a.startS - b.startS));
     setSelectedId(draft.id);
+    seek(draft.startS);
   };
 
   // Removing the selected segment selects its neighbour (the next one, else the previous).
@@ -299,9 +306,9 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
   // being cut), starts the next segment at the playhead: that is how a second segment gets prepared.
   const markIn = () => {
     if (editable) setStart(now());
-    else if (!anyActive) add(now());
+    else if (!anyActive) add(now(), false);
   };
-  const canMarkIn = editable || (!anyActive && newSegmentAt(playhead, durationS, segments) !== null);
+  const canMarkIn = editable || canMarkNew;
 
   useEditorHotkeys({
     shuttle: shuttle.press,
@@ -407,7 +414,12 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
         <Tooltip title={segments.some((x) => x.frozen) ? 'unfreeze your segments first: suggesting would replace them' : 'fill in a first guess from the agenda'}><span>
           <Button size="small" variant="outlined" onClick={suggest} disabled={!shows.data || anyActive || segments.some((x) => x.frozen)}>suggest from agenda</Button>
         </span></Tooltip>
-        <Button size="small" variant="outlined" onClick={() => add()} disabled={anyActive || newSegmentAt(playhead, durationS, segments) === null}>add segment</Button>
+        <Button size="small" variant="outlined" onClick={() => add()} disabled={!canAdd}>add segment</Button>
+        {!anyActive && !canAdd && (
+          <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>
+            no room for a new segment after the playhead (it needs 30 s before the next segment or the end)
+          </Typography>
+        )}
       </Stack>
 
       <Stack spacing={1}>
