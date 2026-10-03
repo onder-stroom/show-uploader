@@ -31,7 +31,7 @@ import { slotFromRecording, toShowOption, type ShowOption } from '../upload/show
 import { useEditorHotkeys } from '../upload/useEditorHotkeys';
 import { useSegmentHistory } from '../upload/useSegmentHistory';
 import { useShuttle } from '../upload/useShuttle';
-import { agendaSlot, editorNote, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../upload/segments';
+import { agendaSlot, editorNote, showsDuringRecording, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../upload/segments';
 
 // The PC's clock is Brussels, and so is everyone reading this page.
 // A cut in these states is being made from the times as they were: editing them now would
@@ -39,11 +39,12 @@ import { agendaSlot, editorNote, formatTimecode, newSegmentAt, parseTimecode, se
 const ACTIVE_STATES: readonly string[] = ['queued', 'cutting', 'uploading', 'finishing'];
 const isActive = (cut: CutStatusView | undefined) => !!cut && ACTIVE_STATES.includes(cut.state);
 
-const brussels = new Intl.DateTimeFormat('nl-BE', { timeZone: 'Europe/Brussels', dateStyle: 'medium', timeStyle: 'short' });
+const brussels = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Brussels', dateStyle: 'medium', timeStyle: 'short' });
 
 export default function Recordings() {
   const q = useRecordings();
   const rescan = useRescanRecordings();
+  const agenda = useShows();
   // The opened recording itself, not a ref looked up in the latest list: one poll that
   // fails or lacks it must not unmount the editor and lose the operator's drafts.
   const [opened, setOpened] = useState<AgentRecording | null>(null);
@@ -117,6 +118,8 @@ export default function Recordings() {
                   {r.state === 'preparing' && ' · preparing the editor view…'}
                   {r.state === 'failed' && ' · could not be prepared'}
                 </Typography>
+                {/* Loading, failed or odd agenda data just means no hint: the list never waits for it. */}
+                <AgendaHint titles={showsDuringRecording(r.recordedAtMs, r.durationS ?? 0, agenda.data).map((x) => x.title).filter(Boolean)} />
               </Box>
               <Button size="small" variant="outlined" disabled={r.state !== 'ready'} onClick={() => setOpened(r)}>
                 open
@@ -130,6 +133,17 @@ export default function Recordings() {
 }
 
 // The provider is what lets the cheat sheet list the shortcuts the editor registers.
+// The shows the agenda has during this recording, so a card says what the night probably holds.
+function AgendaHint({ titles }: { titles: string[] }) {
+  if (titles.length === 0) return null;
+  const shown = titles.slice(0, 4);
+  return (
+    <Typography variant="caption" color="text.secondary" component="div" noWrap>
+      agenda: {shown.join(' · ')}{titles.length > shown.length ? ` · +${titles.length - shown.length} more` : ''}
+    </Typography>
+  );
+}
+
 function Editor(props: { recording: AgentRecording; onClose: () => void }) {
   return (
     <HotkeysProvider>
