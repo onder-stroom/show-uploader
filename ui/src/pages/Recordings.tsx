@@ -10,8 +10,8 @@ import Typography from '@mui/material/Typography';
 import { suggestSegments, validateSegments } from '@domain/recording-segments';
 import { cutFilename, type AgentRecording } from '@domain/recordings-contract';
 import {
-  useCutStatuses, usePreviewPath, useRecordingPeaks, useRecordings, useRescanRecordings, useShows, useStaged, useStartCuts,
-  useUploadingProgress,
+  useAgentStatus, useCutStatuses, usePreviewPath, useRecordingDraft, useRecordingPeaks, useRecordings, useRescanRecordings,
+  useSaveRecordingDraft, useShows, useStaged, useStartCuts, useUploadingProgress,
 } from '../api/hooks';
 import { humanDuration } from '../format';
 import { c } from '../theme';
@@ -31,7 +31,7 @@ import { slotFromRecording, toShowOption, type ShowOption } from '../upload/show
 import { useEditorHotkeys } from '../upload/useEditorHotkeys';
 import { useSegmentHistory } from '../upload/useSegmentHistory';
 import { useShuttle } from '../upload/useShuttle';
-import { agendaSlot, editorNote, showsDuringRecording, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../upload/segments';
+import { agendaSlot, draftKey, editorNote, fromDraftSegments, showsDuringRecording, toDraftSegments, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, type Draft } from '../upload/segments';
 
 // The PC's clock is Brussels, and so is everyone reading this page.
 // A cut in these states is being made from the times as they were: editing them now would
@@ -65,6 +65,7 @@ export default function Recordings() {
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
           cut a night into one upload per artist. cuts are lossless and only the cut parts leave the PC.
         </Typography>
+        <AgentStatusLine />
       </Box>
       {!opened && (
         <Stack spacing={0.5} sx={{ alignItems: 'flex-end' }}>
@@ -117,6 +118,7 @@ export default function Recordings() {
                   {brussels.format(r.recordedAtMs)} · {r.durationS ? humanDuration(r.durationS) : 'reading…'}
                   {r.state === 'preparing' && ' · preparing the editor view…'}
                   {r.state === 'failed' && ' · could not be prepared'}
+                  {r.hasDraft && ' · segments saved'}
                 </Typography>
                 {/* Loading, failed or odd agenda data just means no hint: the list never waits for it. */}
                 <AgendaHint titles={showsDuringRecording(r.recordedAtMs, r.durationS ?? 0, agenda.data).map((x) => x.title).filter(Boolean)} />
@@ -129,6 +131,19 @@ export default function Recordings() {
         </Stack>
       )}
     </Stack>
+  );
+}
+
+// Which build of the PC service answers. A service older than the uploader expects says so plainly,
+// because from the editor an old service just looks like saving that does not work.
+function AgentStatusLine() {
+  const s = useAgentStatus().data;
+  if (!s || !s.reachable) return null;
+  if (s.current) return <Typography variant="caption" color="text.disabled" component="div">PC service build {s.build ?? 'unknown'}</Typography>;
+  return (
+    <Typography variant="caption" component="div" sx={{ color: c.danger }}>
+      the PC service is out of date (version {s.protocol}, the uploader expects {s.expected}). update it to save segments. see the update steps.
+    </Typography>
   );
 }
 
@@ -160,7 +175,15 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
   const uploading = useUploadingProgress();
   const startCuts = useStartCuts();
 
-  const { segments, commit, undo, redo, canUndo, canRedo } = useSegmentHistory([]);
+  const { segments, commit, undo, redo, reset, canUndo, canRedo } = useSegmentHistory([]);
+
+  // Saved segments live on the PC next to the recording. They are loaded once, and never over work the
+  // operator already started; "unsaved" is simply whether the segments differ from what was last saved.
+  const draftQuery = useRecordingDraft(recording.ref);
+  const saveDraft = useSaveRecordingDraft();
+  const savedKey = useRef(draftKey([]));
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const draftApplied = useRef(false);
   const [playhead, setPlayhead] = useState(0);
   const [cutByShow, setCutByShow] = useState<Record<string, string>>({});
   const statuses = useCutStatuses(Object.values(cutByShow));
@@ -197,6 +220,38 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
 
   const shuttle = useShuttle(video, seek);
   // A frozen segment takes no edits (only its own unfreeze), whoever asks: a row, the timeline or a key.
+  useEffect(() => {
+    if (draftApplied.current || draftQuery.isPending || shows.isPending) return;
+    draftApplied.current = true;
+    const saved = draftQuery.data?.draft;
+    if (!saved || segments.length > 0) return;
+    const loaded = fromDraftSegments(saved.segments, newId, shows.data ? new Set(shows.data.map((x) => x.id)) : null);
+    reset(loaded);
+    setSelectedId(loaded[0]?.id ?? null);
+    savedKey.current = JSON.stringify(saved.segments);
+    setSavedAt(saved.savedAtMs);
+  }, [draftQuery.isPending, draftQuery.data, shows.isPending, shows.data, segments.length, reset]);
+
+  const dirty = JSON.stringify(toDraftSegments(segments)) !== savedKey.current;
+  const save = () => {
+    if (!dirty || saveDraft.isPending) return;
+    const sent = toDraftSegments(segments);
+    saveDraft.mutate({ ref: recording.ref, segments: sent }, {
+      onSuccess: (d) => { savedKey.current = JSON.stringify(sent); setSavedAt(d.savedAtMs); },
+    });
+  };
+  // Closing the tab, or leaving the editor, with unsaved segments asks first.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+  const leave = () => {
+    if (dirty && !window.confirm('Leave without saving your segments?')) return;
+    onClose();
+  };
+
   const patch = (id: string, change: Partial<Draft>) =>
     commit((all) => all.map((s) => (s.id === id && (!s.frozen || 'frozen' in change) ? { ...s, ...change } : s)), `edit:${id}`);
   const toggleFreeze = (id: string) => commit((all) => all.map((s) => (s.id === id ? { ...s, frozen: !s.frozen } : s)));
@@ -257,6 +312,7 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
     undo: () => { if (canUndo && !anyActive) undo(); },
     redo: () => { if (canRedo && !anyActive) redo(); },
     toggleSheet: () => setSheetOpen((o) => !o),
+    save,
   });
 
   const submit = () =>
@@ -268,7 +324,7 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
   return (
     <Stack spacing={2.5}>
       <Stack direction="row" spacing={2} sx={{ alignItems: 'baseline', minWidth: 0 }}>
-        <Button size="small" onClick={onClose} sx={{ flexShrink: 0 }}>← recordings</Button>
+        <Button size="small" onClick={leave} sx={{ flexShrink: 0 }}>← recordings</Button>
         <Typography sx={{ fontWeight: 600, minWidth: 0 }} noWrap>{recording.filename}</Typography>
         <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>{humanDuration(durationS)}</Typography>
       </Stack>
@@ -297,7 +353,22 @@ function EditorInner({ recording, onClose }: { recording: AgentRecording; onClos
           <Button size="small" disabled={!canRedo || anyActive} onClick={redo}>redo</Button>
         </span></Tooltip>
         <ShortcutSheet open={sheetOpen} onToggle={() => setSheetOpen((o) => !o)} />
+        <Tooltip title="save these segments next to the recording on the PC. shortcut: ⌘S"><span>
+          <Button size="small" variant={dirty ? 'contained' : 'outlined'} disabled={!dirty || saveDraft.isPending} onClick={save}>
+            {saveDraft.isPending ? 'saving…' : 'save'}
+          </Button>
+        </span></Tooltip>
+        <Typography variant="caption" sx={{ color: saveDraft.isError ? c.danger : c.muted }}>
+          {saveDraft.isError ? `could not save: ${saveDraft.error.message}` : dirty ? 'unsaved changes' : savedAt ? `saved ${new Date(savedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Brussels' })}` : ''}
+        </Typography>
       </Stack>
+      {draftQuery.data?.problem && (
+        <Typography variant="caption" sx={{ color: c.danger }}>
+          {draftQuery.data.problem === 'outdated'
+            ? 'the PC service is too old to keep saved segments: update it to save and restore them.'
+            : 'saved segments could not be loaded: the OBS PC did not answer.'}
+        </Typography>
+      )}
 
       <Stack spacing={1} sx={{ minWidth: 0 }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>

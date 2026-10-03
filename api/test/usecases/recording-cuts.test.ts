@@ -3,8 +3,9 @@ import type { AgentRecording } from '@show-uploader/domain';
 import { verifyPreview } from '../../src/services/preview-signature';
 import { UseCaseError } from '../../src/usecases/errors';
 import {
-  cutIdFor, cutStatuses, deriveCutStatus, listRecordings, openCutSession, recordingPeaks, rescanRecordings, signPreviewPath, startCuts,
+  agentStatus, cutIdFor, cutStatuses, deriveCutStatus, listRecordings, loadDraft, openCutSession, recordingPeaks, rescanRecordings, saveDraft, signPreviewPath, startCuts,
 } from '../../src/usecases/recording-cuts';
+import type { DraftResult } from '../../src/services/recordings-agent';
 import { fakeDeps } from '../fakes';
 
 const rec = (over: Partial<AgentRecording> = {}): AgentRecording => ({
@@ -187,5 +188,66 @@ describe('openCutSession', () => {
 
   it('refuses a show that does not exist', async () => {
     expect((await refusal(openCutSession(input, fakeDeps()))).code).toBe('NOT_FOUND');
+  });
+});
+
+
+describe('agentStatus', () => {
+  it('reports the build and whether the protocol is new enough', async () => {
+    expect(await agentStatus(fakeDeps())).toEqual({ reachable: true, protocol: 2, build: 'abc1234', expected: 2, current: true });
+  });
+
+  it('counts a service that reports no protocol as the oldest, so it reads as outdated', async () => {
+    const deps = fakeDeps({ health: { ok: true, ready: 0, preparing: 0, failed: 0, recordingActive: false } });
+    expect(await agentStatus(deps)).toEqual({ reachable: true, protocol: 1, build: null, expected: 2, current: false });
+  });
+
+  it('is unreachable when the PC does not answer', async () => {
+    expect(await agentStatus(fakeDeps({ health: null }))).toEqual({ reachable: false });
+  });
+});
+
+describe('loadDraft', () => {
+  const draft = { segments: [{ startS: 1, endS: 90, showId: 'a' }], savedAtMs: 5 };
+
+  it('returns the saved segments, or none', async () => {
+    expect(await loadDraft('r1', fakeDeps({ draft: { kind: 'ok', draft } }))).toEqual({ draft, problem: null });
+    expect(await loadDraft('r1', fakeDeps())).toEqual({ draft: null, problem: null });
+  });
+
+  it('never fails because of a PC that is off or too old: the editor just starts empty', async () => {
+    expect(await loadDraft('r1', fakeDeps({ draft: { kind: 'unreachable' } }))).toEqual({ draft: null, problem: 'unreachable' });
+    expect(await loadDraft('r1', fakeDeps({ draft: { kind: 'unsupported' } }))).toEqual({ draft: null, problem: 'outdated' });
+  });
+
+  it('a recording that is gone is a not-found', async () => {
+    const err = await loadDraft('r1', fakeDeps({ draft: { kind: 'gone' } })).catch((e: UseCaseError) => e);
+    expect((err as UseCaseError).code).toBe('NOT_FOUND');
+  });
+});
+
+describe('saveDraft', () => {
+  const segments = [{ startS: 10, endS: 70, showId: 'a', frozen: true }, { startS: 90, endS: 150, showId: null }];
+
+  it('cleans the segments and sends them to the PC', async () => {
+    const deps = fakeDeps();
+    const saved = await saveDraft('r1', [{ ...segments[0], extra: 1 }, segments[1]], deps);
+    expect(deps.recordings.saveDraft).toHaveBeenCalledWith('r1', segments);
+    expect(saved.segments).toEqual(segments);
+  });
+
+  it('refuses segments that are not the right shape without calling the PC', async () => {
+    const deps = fakeDeps();
+    const err = await saveDraft('r1', [{ startS: -1, endS: 5, showId: null }], deps).catch((e: UseCaseError) => e);
+    expect((err as UseCaseError).code).toBe('PRECONDITION_FAILED');
+    expect(deps.recordings.saveDraft).not.toHaveBeenCalled();
+  });
+
+  it('says why it could not save: PC off, PC too old, recording gone, PC refused', async () => {
+    const msg = async (saveResult: DraftResult) => ((await saveDraft('r1', segments, fakeDeps({ saveDraft: saveResult })).catch((e: UseCaseError) => e)) as UseCaseError);
+    expect((await msg({ kind: 'unreachable' })).message).toMatch(/not reachable/);
+    expect((await msg({ kind: 'unsupported' })).message).toMatch(/too old/);
+    expect((await msg({ kind: 'gone' })).code).toBe('NOT_FOUND');
+    expect((await msg({ kind: 'rejected' })).code).toBe('PRECONDITION_FAILED');
   });
 });

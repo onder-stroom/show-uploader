@@ -8,7 +8,7 @@
     "dev": "pnpm --filter @show-uploader/domain build && tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "pnpm --filter @show-uploader/domain build && vitest run",
-    "bundle": "pnpm --filter @show-uploader/domain build && esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/recordings-service.js"
+    "bundle": "pnpm --filter @show-uploader/domain build && node scripts/bundle.mjs"
   },
   "dependencies": {
     "@show-uploader/domain": "workspace:*",

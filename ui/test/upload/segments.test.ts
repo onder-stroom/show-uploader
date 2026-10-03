@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { agendaSlot, editorNote, formatTimecode, newSegmentAt, parseTimecode, selectAfterRemove, showsDuringRecording, type Draft } from '../../src/upload/segments';
+import {
+  agendaSlot, draftKey, editorNote, formatTimecode, fromDraftSegments, newSegmentAt, parseTimecode, selectAfterRemove, showsDuringRecording,
+  toDraftSegments, type Draft,
+} from '../../src/upload/segments';
 
 describe('timecodes', () => {
   it('formats with tenths, hours only when needed', () => {
@@ -125,5 +128,44 @@ describe('showsDuringRecording', () => {
     expect(showsDuringRecording(NaN, hours, [show('x', '2026-10-02', '14:00', '16:00')])).toEqual([]);
     const mixed = [null, undefined, { title: 'no id' }, show('ok', '2026-10-02', '14:00', '16:00')] as never[];
     expect(showsDuringRecording(recordedAt, hours, mixed).map((s) => (s as { id: string }).id)).toEqual(['ok']);
+  });
+});
+
+describe('saved segments', () => {
+  let n = 0;
+  const newId = () => `id${++n}`;
+  const rows: Draft[] = [
+    { id: 'x', startS: 100, endS: 160, showId: 'b', frozen: true },
+    { id: 'y', startS: 10, endS: 70, showId: null },
+  ];
+
+  it('saves without ids and without a false frozen flag', () => {
+    expect(toDraftSegments(rows)).toEqual([
+      { startS: 100, endS: 160, showId: 'b', frozen: true },
+      { startS: 10, endS: 70, showId: null },
+    ]);
+    expect(toDraftSegments([{ id: 'z', startS: 1, endS: 2, showId: null, frozen: false }])).toEqual([{ startS: 1, endS: 2, showId: null }]);
+  });
+
+  it('round-trips, sorted by start, with fresh ids', () => {
+    const back = fromDraftSegments(toDraftSegments(rows), newId, null);
+    expect(back.map((s) => [s.startS, s.endS, s.showId, !!s.frozen])).toEqual([[10, 70, null, false], [100, 160, 'b', true]]);
+    expect(new Set(back.map((s) => s.id)).size).toBe(2);
+  });
+
+  it('clears a show that is no longer to process, keeps the rest, and keeps all when the list is unknown', () => {
+    const saved = toDraftSegments(rows);
+    expect(fromDraftSegments(saved, newId, new Set(['other'])).map((s) => s.showId)).toEqual([null, null]);
+    expect(fromDraftSegments(saved, newId, new Set(['b'])).map((s) => s.showId)).toEqual([null, 'b']);
+    expect(fromDraftSegments(saved, newId, null).map((s) => s.showId)).toEqual([null, 'b']);
+  });
+
+  it('the key ignores ids and changes with anything the operator can edit', () => {
+    const key = draftKey(rows);
+    expect(draftKey(rows.map((r) => ({ ...r, id: `${r.id}2` })))).toBe(key);
+    expect(draftKey([{ ...rows[0], endS: 161 }, rows[1]])).not.toBe(key);
+    expect(draftKey([{ ...rows[0], frozen: false }, rows[1]])).not.toBe(key);
+    expect(draftKey([rows[0], { ...rows[1], showId: 'c' }])).not.toBe(key);
+    expect(draftKey([])).toBe('[]');
   });
 });

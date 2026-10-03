@@ -37,5 +37,15 @@ export function useSegmentHistory(initial: Draft[]) {
     actions.redo();
   }, [actions.redo]);
 
-  return { segments: state.present, commit, undo, redo, canUndo: actions.canUndo, canRedo: actions.canRedo };
+  // Replace everything without it being an undoable edit: loading what was saved is not the operator's doing.
+  const reset = useCallback(
+    (next: Draft[]) => {
+      last.current = { key: null, at: 0 };
+      present.current = next;
+      actions.reset(next);
+    },
+    [actions.reset]
+  );
+
+  return { segments: state.present, commit, undo, redo, reset, canUndo: actions.canUndo, canRedo: actions.canRedo };
 }

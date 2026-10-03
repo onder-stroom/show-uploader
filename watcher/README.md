@@ -31,6 +31,12 @@ file on your dev machine; no git, pnpm or build is needed on the PC.
 
 - Logs: next to the WinSW exe. Status: the uploader's Recordings page.
 - Updating: build a new bundle (step 1), stop the service, replace `recordings-service.js` (keep `.env`), start the service.
+- **Which build is running?** `GET /v1/health` reports `build` (the commit the bundle was built from, with
+  `-dirty` if it had uncommitted changes, `dev` when run from source) and `protocol` (what the service can do).
+  The Recordings page shows the build under its title, and warns when the protocol is older than the
+  uploader expects. `pnpm --filter @show-uploader/watcher bundle` stamps the build.
+- Segments the operator saves in the editor are kept in `draft.json` in the recording's own folder under
+  `.show-uploader`, so they go away with the recording and survive a restart.
 - Deleting recordings by hand is fine at any time. Delete the MKV and the service forgets the
   recording, including its MP4 master, preview and waveform, at the next scan (every
   `SCAN_INTERVAL_MS`, but a scan waits for a running prepare). The Recordings page has a

@@ -1,7 +1,8 @@
 import { vi } from 'vitest';
-import type { AgentRecording } from '@show-uploader/domain';
+import type { AgentHealth, AgentRecording, DraftSegment } from '@show-uploader/domain';
 import type { PlatformJob } from '../src/db/queries';
 import type { ApiDeps, UploadSession, UploadWithJobs } from '../src/ports';
+import type { DraftResult } from '../src/services/recordings-agent';
 import type { AgendaShow } from '../src/services/shows-api';
 
 /**
@@ -18,6 +19,9 @@ export function fakeDeps(opts: {
   jingleS3Key?: string | null;
   recordings?: AgentRecording[] | null;
   strands?: { id: string; name: string; isDefault: boolean }[];
+  health?: AgentHealth | null;
+  draft?: DraftResult;
+  saveDraft?: DraftResult;
   recordingsSecret?: string | null;
 } = {}) {
   const uploads = new Map((opts.uploads ?? []).map((u) => [u.id, u]));
@@ -137,6 +141,9 @@ export function fakeDeps(opts: {
     recordings: {
       list: vi.fn(async () => (opts.recordings === undefined ? [] : opts.recordings)),
       rescan: vi.fn(async () => (opts.recordings === undefined ? [] : opts.recordings)),
+      health: vi.fn(async () => (opts.health === undefined ? { ok: true, protocol: 2, build: 'abc1234', ready: 1, preparing: 0, failed: 0, recordingActive: false } : opts.health) as AgentHealth | null),
+      getDraft: vi.fn(async (_ref: string) => (opts.draft ?? { kind: 'ok', draft: null }) as DraftResult),
+      saveDraft: vi.fn(async (_ref: string, segments: DraftSegment[]) => (opts.saveDraft ?? { kind: 'ok', draft: { segments, savedAtMs: 1 } }) as DraftResult),
       peaks: vi.fn(async (_ref: string) => [0.1] as number[] | null),
       preview: vi.fn(async (_ref: string, _range: string | undefined, _signal?: AbortSignal) => null as Response | null),
     },

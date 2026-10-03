@@ -6,6 +6,25 @@
 
 export const AGENT_API_PREFIX = '/v1';
 
+/**
+ * What the PC service can do, as one number the uploader compares. Bumped whenever the uploader
+ * starts depending on something an older PC service lacks. 1 is everything before this number
+ * existed (a service that does not report one); 2 added saved segments.
+ */
+export const AGENT_PROTOCOL = 2;
+
+/** `GET /v1/health`. `protocol` and `build` are missing from a service that predates them. */
+export type AgentHealth = {
+  ok: boolean;
+  protocol?: number;
+  /** The commit the service was built from, or "dev" when run from source. */
+  build?: string;
+  ready: number;
+  preparing: number;
+  failed: number;
+  recordingActive: boolean;
+};
+
 export type RecordingState = 'preparing' | 'ready' | 'failed';
 
 export type AgentRecording = {
@@ -20,7 +39,36 @@ export type AgentRecording = {
   hasPreview: boolean;
   /** When OBS started writing the file, from its filename or birth time. */
   recordedAtMs: number;
+  /** Segments were saved for this recording. Absent from a PC service that predates saving. */
+  hasDraft?: boolean;
 };
+
+/** A segment as the operator left it in the editor; the working copy kept next to the recording. */
+export type DraftSegment = { startS: number; endS: number; showId: string | null; frozen?: boolean };
+export type RecordingDraft = { segments: DraftSegment[]; savedAtMs: number };
+
+export const MAX_DRAFT_SEGMENTS = 100;
+const MAX_DRAFT_SECONDS = 7 * 24 * 3600;
+
+/**
+ * The saved segments in an untrusted body, cleaned, or null when anything is wrong. Both the PC
+ * service and the api apply it, so what one accepts the other never refuses. Work in progress is
+ * allowed: overlaps and unchosen shows are not this rule's business, only the shape is.
+ */
+export function parseDraftSegments(input: unknown): DraftSegment[] | null {
+  if (!Array.isArray(input) || input.length > MAX_DRAFT_SEGMENTS) return null;
+  const out: DraftSegment[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== 'object') return null;
+    const { startS, endS, showId, frozen } = raw as Record<string, unknown>;
+    const inRange = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= MAX_DRAFT_SECONDS;
+    if (!inRange(startS) || !inRange(endS)) return null;
+    if (showId !== null && (typeof showId !== 'string' || showId.length === 0 || showId.length > 64)) return null;
+    if (frozen !== undefined && typeof frozen !== 'boolean') return null;
+    out.push({ startS, endS, showId: showId as string | null, ...(frozen ? { frozen: true } : {}) });
+  }
+  return out;
+}
 
 export type CutState = 'cutting' | 'cut' | 'uploading' | 'done' | 'failed' | 'source_gone';
 

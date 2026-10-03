@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
-import type { AgentRecording } from '@show-uploader/domain';
+import { AGENT_PROTOCOL, parseDraftSegments, type AgentHealth, type AgentRecording } from '@show-uploader/domain';
+import { BUILD_ID } from './build';
 import { CutError, type CutManager } from './cuts';
 import type { Library, Sidecar } from './library';
 
@@ -21,8 +22,9 @@ const UploadBody = z.object({
   parts: z.array(z.object({ n: z.number().int().min(1), url: z.string().url() })).min(1),
 });
 
-function toRecording(s: Sidecar): AgentRecording {
+function toRecording(s: Sidecar, hasDraft: boolean): AgentRecording {
   return {
+    hasDraft,
     ref: s.ref, filename: s.filename, sizeBytes: s.sizeBytes, mtimeMs: s.mtimeMs,
     durationS: s.durationS, state: s.state, hasPreview: s.hasPreview, recordedAtMs: s.recordedAtMs,
   };
@@ -54,24 +56,27 @@ export function createServer(deps: {
 
   app.get('/v1/health', (_req, res) => {
     const all = deps.library.list();
-    res.json({
+    const health: AgentHealth = {
       ok: true,
+      protocol: AGENT_PROTOCOL,
+      build: BUILD_ID,
       ready: all.filter((s) => s.state === 'ready').length,
       preparing: all.filter((s) => s.state === 'preparing').length,
       failed: all.filter((s) => s.state === 'failed').length,
       ...deps.status(),
-    });
+    };
+    res.json(health);
   });
 
   app.get('/v1/recordings', (_req, res) => {
-    res.json(deps.library.list().map(toRecording));
+    res.json(deps.library.list().map((s) => toRecording(s, deps.library.hasDraft(s.ref))));
   });
 
   // Look at the folder now instead of at the next background pass, which waits for a
   // running prepare to finish. Cheap: it only lists the folder.
   app.post('/v1/rescan', (_req, res) => {
     deps.library.sync(Date.now());
-    res.json(deps.library.list().map(toRecording));
+    res.json(deps.library.list().map((s) => toRecording(s, deps.library.hasDraft(s.ref))));
   });
 
   app.get('/v1/recordings/:ref/preview', (req, res) => {
@@ -86,6 +91,22 @@ export function createServer(deps: {
       console.error('preview failed:', err);
       if (!res.headersSent) res.status(500).json({ error: 'internal error' });
     });
+  });
+
+  // The operator's saved segments. 404 carries a code so the caller can tell "no draft yet" from "no such recording".
+  app.get('/v1/recordings/:ref/draft', (req, res) => {
+    if (!deps.library.get(req.params.ref)) return res.status(404).json({ error: 'unknown recording', code: 'UNKNOWN_RECORDING' });
+    const draft = deps.library.getDraft(req.params.ref);
+    if (!draft) return res.status(404).json({ error: 'no draft', code: 'NO_DRAFT' });
+    res.json(draft);
+  });
+
+  app.put('/v1/recordings/:ref/draft', (req, res) => {
+    const segments = parseDraftSegments((req.body as { segments?: unknown } | undefined)?.segments);
+    if (!segments) return res.status(400).json({ error: 'invalid segments', code: 'BAD_SEGMENTS' });
+    const draft = deps.library.saveDraft(req.params.ref, segments, Date.now());
+    if (!draft) return res.status(404).json({ error: 'unknown recording', code: 'UNKNOWN_RECORDING' });
+    res.json(draft);
   });
 
   app.get('/v1/recordings/:ref/peaks', (req, res) => {

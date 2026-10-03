@@ -7,6 +7,7 @@ export type EditorKeys = {
   markOut(): void;
   goToIn(): void;
   goToOut(): void;
+  save(): void;
   undo(): void;
   redo(): void;
   toggleSheet(): void;
@@ -33,6 +34,7 @@ export function useEditorHotkeys(a: EditorKeys) {
   useHotkeys('o', a.markOut, { ...base, description: 'OUT: set the out point at the playhead' });
   useHotkeys('shift+i', a.goToIn, { ...base, description: 'move the playhead to the in point' });
   useHotkeys('shift+o', a.goToOut, { ...base, description: 'move the playhead to the out point' });
+  useHotkeys('mod+s', a.save, { ...base, description: 'save the segments' });
   useHotkeys('mod+z', a.undo, { ...base, description: 'undo' });
   useHotkeys(['mod+shift+z', 'mod+y'], a.redo, { ...base, description: 'redo' });
   useHotkeys('shift+slash', a.toggleSheet, { ...base, description: 'show or hide this list' });
